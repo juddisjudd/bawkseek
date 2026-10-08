@@ -32,6 +32,8 @@ icon_assets!(
         SlidersHorizontal,
         Trash,
         Upload,
+        UserMinus,
+        UserPlus,
         Users,
         Wifi,
         WifiOff,

@@ -5,7 +5,7 @@ use gpui_kit::component::{Icon, Sizable};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::UserAction;
+use super::{Social, UserAction};
 use crate::theme::Palette;
 
 /// A username that opens its shares on click and offers every user action on right-click.
@@ -32,7 +32,7 @@ pub fn user_cell<V: EventEmitter<UserAction>>(
                 },
             )),
         )
-        .context_menu(move |menu, _, _| user_menu(menu, &menu_user, view.clone()))
+        .context_menu(move |menu, _, cx| user_menu(menu, &menu_user, view.clone(), cx))
 }
 
 pub fn page_header(
@@ -148,31 +148,68 @@ pub fn strong(text: impl Into<SharedString>, p: &Palette) -> Div {
     div().text_color(p.text_strong).child(text.into())
 }
 
-type MenuEntry = (&'static str, IconName, fn(String) -> UserAction);
-
 /// The actions offered for any username, as items of a right-click menu.
 pub fn user_menu<V: EventEmitter<UserAction>>(
     menu: PopupMenu,
     username: &str,
     view: WeakEntity<V>,
+    cx: &App,
 ) -> PopupMenu {
-    let entries: [MenuEntry; 2] = [
-        ("browse shares", IconName::FolderSearch, UserAction::Browse),
+    let (buddy, ignored) = cx.try_global::<Social>().map_or((false, false), |social| {
+        (
+            social.buddies.contains(username),
+            social.ignored.contains(username),
+        )
+    });
+    let name = username.to_string();
+    let entries = [
+        (
+            "browse shares",
+            IconName::FolderSearch,
+            UserAction::Browse(name.clone()),
+        ),
         (
             "send message",
             IconName::MessagesSquare,
-            UserAction::Message,
+            UserAction::Message(name.clone()),
         ),
+        ("user info", IconName::Info, UserAction::Info(name.clone())),
+        if buddy {
+            (
+                "remove from buddies",
+                IconName::UserMinus,
+                UserAction::SetBuddy(name.clone(), false),
+            )
+        } else {
+            (
+                "add to buddies",
+                IconName::UserPlus,
+                UserAction::SetBuddy(name.clone(), true),
+            )
+        },
+        if ignored {
+            (
+                "stop ignoring",
+                IconName::Eye,
+                UserAction::SetIgnored(name.clone(), false),
+            )
+        } else {
+            (
+                "ignore",
+                IconName::EyeOff,
+                UserAction::SetIgnored(name, true),
+            )
+        },
     ];
     entries
         .into_iter()
         .fold(menu, |menu, (label, icon, action)| {
-            let (view, username) = (view.clone(), username.to_string());
+            let view = view.clone();
             menu.item(
                 PopupMenuItem::new(label)
                     .icon(Icon::new(icon))
                     .on_click(move |_, _, cx| {
-                        let _ = view.update(cx, |_, cx| cx.emit(action(username.clone())));
+                        let _ = view.update(cx, |_, cx| cx.emit(action.clone()));
                     }),
             )
         })

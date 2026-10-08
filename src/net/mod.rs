@@ -2,6 +2,7 @@ mod browse;
 mod group;
 mod rooms;
 mod sharing;
+mod social;
 mod worker;
 
 use std::path::PathBuf;
@@ -17,6 +18,7 @@ pub use browse::{Listing, Node};
 pub use group::{FileHit, FolderHit, SearchHits};
 pub use rooms::{RoomLine, Rooms};
 pub use sharing::{overlaps, virtual_roots};
+pub use social::{Presence, UserCard};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Status {
@@ -149,6 +151,7 @@ pub enum Command {
         download_dir: PathBuf,
         shares: Vec<PathBuf>,
         upload_slots: usize,
+        buddies: Vec<String>,
     },
     Logout,
     Reconnect,
@@ -181,6 +184,10 @@ pub enum Command {
         text: String,
     },
     RoomList,
+    Watch(String),
+    Unwatch(String),
+    LookUp(String),
+    SetAway(bool),
     JoinRoom {
         room: String,
         private: bool,
@@ -230,6 +237,8 @@ pub enum Event {
         at: i64,
         events: Vec<soulseek_rs::RoomEvent>,
     },
+    Buddies(Vec<UserCard>),
+    Card(UserCard),
     Notice(NoticeLevel, String),
 }
 
@@ -271,6 +280,10 @@ pub struct Session {
     pub chats: Chats,
     pub viewing_chat: Option<String>,
     pub rooms: Rooms,
+    pub buddies: Vec<UserCard>,
+    pub card: Option<UserCard>,
+    pub ignored: std::collections::HashSet<String>,
+    pub away: bool,
     _pump: Task<()>,
 }
 
@@ -304,6 +317,10 @@ impl Session {
             chats: Chats::default(),
             viewing_chat: None,
             rooms: Rooms::default(),
+            buddies: Vec::new(),
+            card: None,
+            ignored: Default::default(),
+            away: false,
             _pump: pump,
         }
     }
@@ -360,6 +377,9 @@ impl Session {
                 at,
                 new,
             } => {
+                if self.ignored.contains(&username) {
+                    return;
+                }
                 let read = self.viewing_chat.as_deref() == Some(username.as_str());
                 if new && !read {
                     cx.emit(Notice(
@@ -372,9 +392,32 @@ impl Session {
             }
             Event::Rooms { at, events } => {
                 for event in events {
+                    if let soulseek_rs::RoomEvent::Message { username, .. } = &event
+                        && self.ignored.contains(username)
+                    {
+                        continue;
+                    }
                     if let Some(problem) = self.rooms.apply(at, event) {
                         cx.emit(Notice(NoticeLevel::Warning, problem.into()));
                     }
+                }
+            }
+            Event::Buddies(cards) => {
+                if let Some(card) = &mut self.card
+                    && let Some(buddy) = cards.iter().find(|buddy| buddy.username == card.username)
+                    && buddy.presence != Presence::Unknown
+                {
+                    card.presence = buddy.presence;
+                }
+                self.buddies = cards;
+            }
+            Event::Card(card) => {
+                if self
+                    .card
+                    .as_ref()
+                    .is_some_and(|current| current.username == card.username)
+                {
+                    self.card = Some(card);
                 }
             }
             Event::Notice(level, text) => cx.emit(Notice(level, text.into())),
@@ -390,6 +433,9 @@ impl Session {
         self.chats = Chats::default();
         self.viewing_chat = None;
         self.rooms = Rooms::default();
+        self.buddies.clear();
+        self.card = None;
+        self.away = false;
     }
 
     pub fn send(&self, command: Command) {
@@ -502,6 +548,22 @@ impl Session {
             cx.notify();
         }
         self.rooms.viewing = room;
+    }
+
+    pub fn look_up(&mut self, username: &str, cx: &mut Context<Self>) {
+        self.card = Some(UserCard {
+            username: username.to_string(),
+            loading: true,
+            ..Default::default()
+        });
+        self.send(Command::LookUp(username.to_string()));
+        cx.notify();
+    }
+
+    pub fn set_away(&mut self, away: bool, cx: &mut Context<Self>) {
+        self.away = away;
+        self.send(Command::SetAway(away));
+        cx.notify();
     }
 
     pub fn active_uploads(&self) -> usize {

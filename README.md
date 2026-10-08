@@ -2,7 +2,7 @@
 
 A Soulseek desktop client for Windows, built in Rust with [GPUI Kit](https://gpui-kit.com). It looks and feels like [bawkterm](https://bawkterm.com).
 
-> Status: early. Search, downloads, sharing, browsing, messages and chat rooms work. User info and buddies come next.
+> Status: early. Search, downloads, sharing, browsing, messages, chat rooms and buddies work. Wishlist and recommendations come next.
 
 ## What works
 
@@ -12,14 +12,15 @@ A Soulseek desktop client for Windows, built in Rust with [GPUI Kit](https://gpu
 - **Browse**: open any user's shared folders as a tree, from the browse page or by clicking a username in search, transfers or uploads. Filter by folder or file name, download single files or a whole folder with its subfolders. Folders with more than 200 files ask before downloading.
 - **Messages**: private conversations with any user, even offline ones. Unread counts in the sidebar, a toast for new messages, and logs saved on this computer per account (`%APPDATA%\bawkseek\messages`).
 - **Rooms**: the public room list, sorted by size and filterable. Join several rooms at once, each in its own tab with members, tickers and unread counts. Set your own ticker, create private rooms, and rejoin automatically after a reconnect.
-- **User menu**: right-click any username to browse their shares or send a message.
+- **Users**: look anyone up for their status, shares, speed, upload slots and queue. Keep buddies with live online, away and offline status. Ignore a user to hide their messages and room lines (the network gives no way to refuse their downloads). Set yourself away from settings.
+- **User menu**: right-click any username to browse their shares, send a message, see their info, add or remove them as a buddy, or ignore them.
 - **Transfers**: progress, speed and queue place per file, grouped by folder. Pause, resume, retry, cancel, open the folder.
 - **Sharing**: share any number of folders from the uploads page. They are scanned in the background after login, so a big library never delays it. Other users see each folder by its name: `D:\Music` appears as `Music`. A folder inside one you already share is refused. Everything in a shared folder is shared, hidden files included.
 - **Uploads**: who downloads from you, with progress, speed and queue place. Cancel a running upload, clear finished ones, and set how many people can download at once (upload slots, 1 to 50, default 10).
 - **Reconnects**: a dropped server connection reconnects by itself. Queued downloads resume when their peer is back.
 - **Settings**: download folder, listening port, dark or light theme.
 
-Not built yet: user info and buddies, wishlist, UPnP port mapping, an upload speed limit, banning users.
+Not built yet: wishlist, interests and recommendations, UPnP port mapping, an upload speed limit, banning users.
 
 ## Build
 

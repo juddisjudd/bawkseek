@@ -14,17 +14,19 @@ pub enum Page {
     Browse,
     Rooms,
     Messages,
+    Users,
     Settings,
 }
 
 impl Page {
-    pub const MAIN: [Page; 6] = [
+    pub const MAIN: [Page; 7] = [
         Page::Search,
         Page::Transfers,
         Page::Uploads,
         Page::Browse,
         Page::Rooms,
         Page::Messages,
+        Page::Users,
     ];
 
     pub fn label(self) -> &'static str {
@@ -35,6 +37,7 @@ impl Page {
             Page::Browse => "browse",
             Page::Rooms => "rooms",
             Page::Messages => "messages",
+            Page::Users => "users",
             Page::Settings => "settings",
         }
     }
@@ -47,6 +50,7 @@ impl Page {
             Page::Browse => IconName::FolderSearch,
             Page::Rooms => IconName::Hash,
             Page::Messages => IconName::MessagesSquare,
+            Page::Users => IconName::Users,
             Page::Settings => IconName::Settings,
         }
     }
@@ -55,6 +59,7 @@ impl Page {
 pub struct Presence {
     pub username: SharedString,
     pub online: bool,
+    pub away: bool,
 }
 
 pub fn title_bar(presence: Option<Presence>, cx: &App) -> impl IntoElement {
@@ -74,7 +79,7 @@ pub fn title_bar(presence: Option<Presence>, cx: &App) -> impl IntoElement {
         );
 
     let status = presence.map(|presence| {
-        let color = if presence.online {
+        let color = if presence.online && !presence.away {
             p.success
         } else {
             p.warning
@@ -88,6 +93,7 @@ pub fn title_bar(presence: Option<Presence>, cx: &App) -> impl IntoElement {
             .text_color(p.text_weak)
             .child(div().size(px(7.)).rounded_full().bg(color))
             .child(presence.username)
+            .when(presence.away, |this| this.child("· away"))
     });
 
     TitleBar::new()

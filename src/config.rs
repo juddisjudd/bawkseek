@@ -17,6 +17,8 @@ pub struct Config {
     pub light_theme: bool,
     pub shared_dirs: Vec<PathBuf>,
     pub upload_slots: usize,
+    pub buddies: Vec<String>,
+    pub ignored: Vec<String>,
 }
 
 impl Default for Config {
@@ -29,6 +31,8 @@ impl Default for Config {
             light_theme: false,
             shared_dirs: Vec::new(),
             upload_slots: DEFAULT_UPLOAD_SLOTS,
+            buddies: Vec::new(),
+            ignored: Vec::new(),
         }
     }
 }

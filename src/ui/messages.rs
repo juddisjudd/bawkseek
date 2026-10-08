@@ -251,9 +251,9 @@ impl MessagesView {
                         )
                     }),
             )
-            .context_menu(move |menu, _, _| {
+            .context_menu(move |menu, _, cx| {
                 let (view, username) = (view.clone(), menu_user.clone());
-                kit::user_menu(menu, &username, view.clone())
+                kit::user_menu(menu, &username, view.clone(), cx)
                     .separator()
                     .item(
                         PopupMenuItem::new("delete conversation")

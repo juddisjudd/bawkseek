@@ -8,12 +8,14 @@ mod search;
 mod settings;
 mod transfers;
 mod uploads;
+mod users;
 
 use gpui_kit::component::button::Button;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Sizable, Theme, ThemeMode, WindowExt};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
+use std::collections::HashSet;
 
 use crate::config::{self, Config};
 use crate::net::{Command, Notice, NoticeLevel, Session, Status};
@@ -28,13 +30,26 @@ use search::SearchView;
 use settings::{SettingsEvent, SettingsView};
 use transfers::TransfersView;
 use uploads::{UploadsEvent, UploadsView};
+use users::UsersView;
 
 /// Something to do with a user, raised by any view that shows usernames.
 #[derive(Clone)]
 pub enum UserAction {
     Browse(String),
     Message(String),
+    Info(String),
+    SetBuddy(String, bool),
+    SetIgnored(String, bool),
 }
+
+/// Buddy and ignore lists, readable wherever a user menu is built.
+#[derive(Default)]
+pub struct Social {
+    pub buddies: HashSet<String>,
+    pub ignored: HashSet<String>,
+}
+
+impl Global for Social {}
 
 struct PendingLogin {
     username: String,
@@ -55,6 +70,7 @@ pub struct Workspace {
     browse: Entity<BrowseView>,
     messages: Entity<MessagesView>,
     rooms: Entity<RoomsView>,
+    users: Entity<UsersView>,
     settings: Entity<SettingsView>,
     _subscriptions: Vec<Subscription>,
 }
@@ -83,6 +99,7 @@ impl Workspace {
         let browse = cx.new(|cx| BrowseView::new(session.clone(), window, cx));
         let messages = cx.new(|cx| MessagesView::new(session.clone(), window, cx));
         let rooms = cx.new(|cx| RoomsView::new(session.clone(), window, cx));
+        let users = cx.new(|cx| UsersView::new(session.clone(), window, cx));
         let settings = cx.new(|cx| SettingsView::new(&config, window, cx));
 
         let subscriptions = vec![
@@ -101,6 +118,7 @@ impl Workspace {
             cx.subscribe_in(&uploads, window, Self::open_user),
             cx.subscribe_in(&messages, window, Self::open_user),
             cx.subscribe_in(&rooms, window, Self::open_user),
+            cx.subscribe_in(&users, window, Self::open_user),
             cx.subscribe_in(&session, window, |_, _, notice: &Notice, window, cx| {
                 let note = match notice.0 {
                     NoticeLevel::Info => Notification::info(notice.1.clone()),
@@ -124,9 +142,11 @@ impl Workspace {
             browse,
             messages,
             rooms,
+            users,
             settings,
             _subscriptions: subscriptions,
         };
+        this.sync_social(cx);
         this.auto_login(cx);
         this
     }
@@ -159,6 +179,7 @@ impl Workspace {
             download_dir: self.config.download_dir.clone(),
             shares: self.config.shared_dirs.clone(),
             upload_slots: self.config.upload_slots,
+            buddies: self.config.buddies.clone(),
         };
         self.session
             .update(cx, |session, cx| session.login(command, cx));
@@ -239,6 +260,10 @@ impl Workspace {
                 };
                 Theme::change(mode, Some(window), cx);
             }
+            SettingsEvent::Away(away) => {
+                self.session
+                    .update(cx, |session, cx| session.set_away(*away, cx));
+            }
             SettingsEvent::Logout => {
                 config::forget_password(&self.config.username);
                 self.session.update(cx, |session, cx| session.logout(cx));
@@ -293,7 +318,50 @@ impl Workspace {
                     .update(cx, |messages, cx| messages.open(username, window, cx));
                 self.select(Page::Messages, window, cx);
             }
+            UserAction::Info(username) => {
+                self.session
+                    .update(cx, |session, cx| session.look_up(username, cx));
+                self.select(Page::Users, window, cx);
+            }
+            UserAction::SetBuddy(username, add) => {
+                let list = &mut self.config.buddies;
+                list.retain(|name| name != username);
+                if *add {
+                    list.push(username.clone());
+                }
+                let command = if *add {
+                    Command::Watch(username.clone())
+                } else {
+                    Command::Unwatch(username.clone())
+                };
+                self.session.read(cx).send(command);
+                self.save();
+                self.sync_social(cx);
+            }
+            UserAction::SetIgnored(username, ignore) => {
+                let list = &mut self.config.ignored;
+                list.retain(|name| name != username);
+                if *ignore {
+                    list.push(username.clone());
+                }
+                self.save();
+                self.sync_social(cx);
+            }
         }
+    }
+
+    /// Pushes the saved buddy and ignore lists to the menus and the session.
+    fn sync_social(&mut self, cx: &mut Context<Self>) {
+        let ignored: HashSet<String> = self.config.ignored.iter().cloned().collect();
+        cx.set_global(Social {
+            buddies: self.config.buddies.iter().cloned().collect(),
+            ignored: ignored.clone(),
+        });
+        self.session.update(cx, |session, cx| {
+            session.ignored = ignored;
+            cx.notify();
+        });
+        cx.notify();
     }
 
     fn save(&self) {
@@ -317,6 +385,7 @@ impl Workspace {
                 .browse
                 .update(cx, |browse, cx| browse.focus(window, cx)),
             Page::Rooms => self.rooms.update(cx, |rooms, cx| rooms.focus(window, cx)),
+            Page::Users => self.users.update(cx, |users, cx| users.focus(window, cx)),
             Page::Messages => self
                 .messages
                 .update(cx, |messages, cx| messages.focus(window, cx)),
@@ -375,6 +444,7 @@ impl Render for Workspace {
         let presence = signed_in.then(|| Presence {
             username: session.username.clone(),
             online: session.status.is_online(),
+            away: session.away,
         });
         let counts = [
             (Page::Search, session.searches.len()),
@@ -416,6 +486,7 @@ impl Render for Workspace {
             Page::Messages => self.messages.clone().into_any_element(),
             Page::Settings => self.settings.clone().into_any_element(),
             Page::Rooms => self.rooms.clone().into_any_element(),
+            Page::Users => self.users.clone().into_any_element(),
         };
 
         root.child(

@@ -14,12 +14,14 @@ pub enum SettingsEvent {
     DownloadDir(PathBuf),
     ListenPort(u16),
     LightTheme(bool),
+    Away(bool),
     Logout,
 }
 
 pub struct SettingsView {
     username: SharedString,
     light_theme: bool,
+    away: bool,
     download_dir: Entity<InputState>,
     listen_port: Entity<InputState>,
     port_error: bool,
@@ -59,6 +61,7 @@ impl SettingsView {
         Self {
             username: config.username.clone().into(),
             light_theme: config.light_theme,
+            away: false,
             download_dir,
             listen_port,
             port_error: false,
@@ -68,6 +71,7 @@ impl SettingsView {
 
     pub fn set_username(&mut self, username: SharedString) {
         self.username = username;
+        self.away = false;
     }
 
     fn commit_dir(&mut self, cx: &mut Context<Self>) {
@@ -169,7 +173,8 @@ impl Render for SettingsView {
             .pb_8()
             .child(kit::page_header("settings", "saved as you change them", &p))
             .child(
-                section("account", &p).child(field(
+                section("account", &p)
+                    .child(field(
                     "logged in as",
                     "logging out stops every transfer",
                     div()
@@ -187,7 +192,19 @@ impl Render for SettingsView {
                                 ),
                         ),
                     &p,
-                )),
+                ))
+                    .child(field(
+                        "away",
+                        "tells other users you are not at the keyboard. resets when you log in again.",
+                        Switch::new("away")
+                            .checked(self.away)
+                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                                this.away = *checked;
+                                cx.emit(SettingsEvent::Away(*checked));
+                                cx.notify();
+                            })),
+                        &p,
+                    )),
             )
             .child(
                 section("downloads", &p)

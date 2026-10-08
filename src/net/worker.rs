@@ -12,6 +12,7 @@ use soulseek_rs::{Client, ClientSettings, DownloadStatus, RoomEvent, SessionLoss
 use super::browse::Listing;
 use super::group::group;
 use super::sharing::{Scanner, Uploads};
+use super::social::{Buddies, Lookup};
 use super::{Command, DlState, DownloadRow, Event, NoticeLevel, Status, Wanted, unix_now};
 use crate::format;
 
@@ -83,6 +84,9 @@ struct Worker {
     uploads: Uploads,
     browses: Vec<(String, Instant)>,
     rooms: Vec<(String, bool)>,
+    buddies: Buddies,
+    lookup: Lookup,
+    away: bool,
 }
 
 impl Worker {
@@ -112,6 +116,9 @@ impl Worker {
             uploads: Uploads::default(),
             browses: Vec::new(),
             rooms: Vec::new(),
+            buddies: Buddies::default(),
+            lookup: Lookup::default(),
+            away: false,
         }
     }
 
@@ -147,7 +154,9 @@ impl Worker {
                 download_dir,
                 shares,
                 upload_slots,
+                buddies,
             } => {
+                self.buddies.set(buddies);
                 self.download_dir = download_dir;
                 self.shares = shares;
                 self.upload_slots = upload_slots;
@@ -235,6 +244,19 @@ impl Worker {
                 }
             }
             Command::Browse(username) => self.browse(username),
+            Command::Watch(name) => self.buddies.add(self.client.as_deref(), name),
+            Command::Unwatch(name) => self.buddies.remove(self.client.as_deref(), &name),
+            Command::LookUp(name) => {
+                if let Some(client) = &self.client {
+                    self.lookup.start(client, name);
+                }
+            }
+            Command::SetAway(away) => {
+                self.away = away;
+                if let Some(client) = &self.client {
+                    let _ = client.set_away(away);
+                }
+            }
             Command::RoomList => {
                 if let Some(client) = &self.client {
                     let _ = client.request_room_list();
@@ -335,6 +357,8 @@ impl Worker {
                 }
                 client.set_upload_slots(self.upload_slots);
                 let _ = client.request_room_list();
+                self.buddies.watch_all(&client);
+                self.away = false;
                 self.client = Some(Arc::new(client));
                 self.pinged = Instant::now();
                 self.rescan();
@@ -351,6 +375,10 @@ impl Worker {
     fn restore_session(&self, client: &Client) {
         self.requeue_peers(client);
         self.rescan();
+        self.buddies.watch_all(client);
+        if self.away {
+            let _ = client.set_away(true);
+        }
         for (room, private) in &self.rooms {
             let _ = if *private {
                 client.join_private_room(room)
@@ -416,6 +444,7 @@ impl Worker {
         self.scanner.invalidate();
         self.uploads.reset();
         self.browses.clear();
+        self.lookup = Lookup::default();
         self.rooms.clear();
         self.client = None;
     }
@@ -574,6 +603,12 @@ impl Worker {
         self.poll_folders(&client);
         self.poll_downloads(&client);
         self.poll_browses(&client);
+        if let Some(cards) = self.buddies.poll(&client) {
+            self.emit(Event::Buddies(cards));
+        }
+        if let Some(card) = self.lookup.poll(&client) {
+            self.emit(Event::Card(card));
+        }
         let room_events = client.take_room_events();
         if !room_events.is_empty() {
             for event in &room_events {
