@@ -1,5 +1,5 @@
 use gpui_kit::assets::IconName;
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{Icon, Sizable};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -155,7 +155,7 @@ impl DiscoverView {
                     ),
             );
         }
-        list.child(div().pt_1().child(Input::new(input).small()))
+        list.child(div().pt_1().child(kit::input(input).small()))
     }
 
     fn recommendation_rows(

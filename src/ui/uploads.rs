@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{
@@ -335,7 +335,7 @@ impl UploadsView {
         rows.child(
             kit::box_edges(footer, count == 0, true, p)
                 .child(div().text_color(p.text).child("upload slots"))
-                .child(div().w(px(64.)).child(Input::new(&self.slots).small()))
+                .child(div().w(px(64.)).child(kit::input(&self.slots).small()))
                 .child(
                     div()
                         .flex_1()

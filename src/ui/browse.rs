@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{Icon, Sizable, VirtualListScrollHandle, WindowExt, v_virtual_list};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -542,7 +542,7 @@ impl BrowseView {
                     .border_color(p.border_weak)
                     .child(
                         div().flex_1().child(
-                            Input::new(&self.filter)
+                            kit::input(&self.filter)
                                 .appearance(false)
                                 .cleanable(true)
                                 .prefix(
@@ -722,17 +722,15 @@ impl Render for BrowseView {
             .border_1()
             .border_color(p.border_weak)
             .bg(p.bg_weak)
-            .child(div().text_color(p.text_weak).child("$"))
             .child(
-                div()
-                    .text_color(p.text_strong)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child("browse"),
+                Icon::new(IconName::FolderSearch)
+                    .size(px(15.))
+                    .text_color(p.text_weaker),
             )
             .child(
                 div()
                     .flex_1()
-                    .child(Input::new(&self.user).appearance(false)),
+                    .child(kit::input(&self.user).appearance(false)),
             )
             .child(
                 Button::new("open-browse")

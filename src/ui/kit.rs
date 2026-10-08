@@ -1,5 +1,6 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::menu::{ContextMenuExt, PopupMenu, PopupMenuItem};
 use gpui_kit::component::{Icon, Sizable};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -33,6 +34,11 @@ pub fn user_cell<V: EventEmitter<UserAction>>(
             )),
         )
         .context_menu(move |menu, _, cx| user_menu(menu, &menu_user, view.clone(), cx))
+}
+
+/// Every text box in the app, without the border that lights up on focus.
+pub fn input(state: &Entity<InputState>) -> Input {
+    Input::new(state).focus_bordered(false)
 }
 
 pub fn page_header(

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use gpui_kit::component::Sizable;
 use gpui_kit::component::WindowExt;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::*;
 
@@ -162,7 +162,7 @@ impl SettingsView {
                         .flex_col()
                         .gap_3()
                         .child("the server changes it right away. remembered passwords are updated too.")
-                        .child(Input::new(&input).mask_toggle()),
+                        .child(kit::input(&input).mask_toggle()),
                 )
                 .footer(
                     div()
@@ -344,7 +344,7 @@ impl Render for SettingsView {
                     .child(field(
                         "listening port",
                         port_hint,
-                        div().w(px(120.)).child(Input::new(&self.listen_port)),
+                        div().w(px(120.)).child(kit::input(&self.listen_port)),
                         &p,
                     ))
                     .child(field(
@@ -375,7 +375,7 @@ impl Render for SettingsView {
                         div()
                             .flex()
                             .gap_2()
-                            .child(div().flex_1().child(Input::new(&self.download_dir)))
+                            .child(div().flex_1().child(kit::input(&self.download_dir)))
                             .child(Button::new("browse").outline().label("browse…").on_click(
                                 cx.listener(|this, _, window, cx| this.browse(window, cx)),
                             )),
@@ -388,7 +388,7 @@ impl Render for SettingsView {
                             .flex()
                             .items_center()
                             .gap_2()
-                            .child(div().w(px(120.)).child(Input::new(&self.download_limit)))
+                            .child(div().w(px(120.)).child(kit::input(&self.download_limit)))
                             .child(div().text_color(p.text_weak).child("kb/s")),
                         &p,
                     )),

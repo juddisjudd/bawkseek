@@ -3,7 +3,7 @@ use std::rc::Rc;
 use chrono::{DateTime, Local};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{Icon, Sizable, VirtualListScrollHandle, v_virtual_list};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -423,7 +423,7 @@ impl RoomsView {
                     .border_color(p.border_weak)
                     .child(
                         div().flex_1().child(
-                            Input::new(&self.filter)
+                            kit::input(&self.filter)
                                 .appearance(false)
                                 .cleanable(true)
                                 .prefix(
@@ -623,7 +623,7 @@ impl RoomsView {
                                     ),
                             )
                     }))
-                    .child(Input::new(&self.ticker).small()),
+                    .child(kit::input(&self.ticker).small()),
             );
 
         div()
@@ -647,7 +647,7 @@ impl RoomsView {
                             .pt_2()
                             .border_t_1()
                             .border_color(p.border_weak)
-                            .child(div().flex_1().child(Input::new(&self.composer)))
+                            .child(div().flex_1().child(kit::input(&self.composer)))
                             .child(
                                 Button::new("say").primary().small().label("send").on_click(
                                     cx.listener(|this, _, window, cx| this.say(window, cx)),
@@ -794,17 +794,15 @@ impl Render for RoomsView {
             .border_1()
             .border_color(p.border_weak)
             .bg(p.bg_weak)
-            .child(div().text_color(p.text_weak).child("$"))
             .child(
-                div()
-                    .text_color(p.text_strong)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child("join"),
+                Icon::new(IconName::Hash)
+                    .size(px(15.))
+                    .text_color(p.text_weaker),
             )
             .child(
                 div()
                     .flex_1()
-                    .child(Input::new(&self.target).appearance(false)),
+                    .child(kit::input(&self.target).appearance(false)),
             )
             .child(
                 kit::chip("private-room", "private", self.private, &p).on_click(cx.listener(

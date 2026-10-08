@@ -52,7 +52,11 @@ fn default_download_dir() -> PathBuf {
         .join("bawkseek")
 }
 
+/// `BAWKSEEK_HOME` moves settings and logs elsewhere, so a second copy or a test run leaves the real ones alone.
 pub fn data_dir() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("BAWKSEEK_HOME") {
+        return Some(PathBuf::from(home));
+    }
     Some(dirs::config_dir()?.join("bawkseek"))
 }
 

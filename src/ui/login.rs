@@ -1,9 +1,10 @@
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use super::kit;
 use crate::assets::MARK;
 use crate::net::Status;
 use crate::theme::palette;
@@ -121,7 +122,7 @@ impl Render for LoginView {
                         .text_color(p.text_weak)
                         .child(label),
                 )
-                .child(Input::new(input).disabled(connecting))
+                .child(kit::input(input).disabled(connecting))
         };
 
         div()

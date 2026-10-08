@@ -1,6 +1,6 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{Icon, Sizable, WindowExt};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -190,7 +190,7 @@ impl UsersView {
                         .flex_col()
                         .gap_3()
                         .child("the days come out of your own privileges.")
-                        .child(Input::new(&days)),
+                        .child(kit::input(&days)),
                 )
                 .footer(
                     div()
@@ -468,17 +468,15 @@ impl Render for UsersView {
             .border_1()
             .border_color(p.border_weak)
             .bg(p.bg_weak)
-            .child(div().text_color(p.text_weak).child("$"))
             .child(
-                div()
-                    .text_color(p.text_strong)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child("user"),
+                Icon::new(IconName::User)
+                    .size(px(15.))
+                    .text_color(p.text_weaker),
             )
             .child(
                 div()
                     .flex_1()
-                    .child(Input::new(&self.target).appearance(false)),
+                    .child(kit::input(&self.target).appearance(false)),
             )
             .child(
                 Button::new("look-up")
