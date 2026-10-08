@@ -11,7 +11,6 @@ mod transfers;
 mod uploads;
 mod users;
 
-use gpui_kit::component::button::Button;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Sizable, WindowExt};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -501,8 +500,7 @@ impl Workspace {
                 .child(div().flex_1().text_color(p.text).child(text))
                 .when(action, |this| {
                     this.child(
-                        Button::new("reconnect")
-                            .outline()
+                        kit::button("reconnect", cx)
                             .small()
                             .label("log in here again")
                             .on_click(cx.listener(|this, _, _, cx| {

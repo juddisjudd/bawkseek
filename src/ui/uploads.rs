@@ -546,8 +546,7 @@ impl Render for UploadsView {
             .flex()
             .gap_2()
             .child(
-                Button::new("rescan")
-                    .outline()
+                kit::button("rescan", cx)
                     .small()
                     .icon(Icon::new(IconName::RotateCw))
                     .label("rescan")
@@ -556,8 +555,7 @@ impl Render for UploadsView {
             )
             .when(!self.shares.is_empty(), |this| {
                 this.child(
-                    Button::new("share")
-                        .outline()
+                    kit::button("share", cx)
                         .small()
                         .icon(Icon::new(IconName::Plus))
                         .label("share a folder…")
@@ -583,8 +581,7 @@ impl Render for UploadsView {
                     .child(format!("{active} uploading · {queued} queued")),
             )
             .child(
-                Button::new("clear-uploads")
-                    .outline()
+                kit::button("clear-uploads", cx)
                     .small()
                     .label("clear finished")
                     .disabled(!finished)

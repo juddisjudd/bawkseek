@@ -4,7 +4,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{Icon, Sizable, VirtualListScrollHandle, v_virtual_list};
@@ -668,8 +667,7 @@ impl Render for SearchView {
                     .child(kit::input(&self.query).appearance(false)),
             )
             .child(
-                Button::new("run-search")
-                    .primary()
+                kit::button("run-search", cx)
                     .small()
                     .label("search")
                     .on_click(cx.listener(|this, _, window, cx| this.run(window, cx))),

@@ -1,5 +1,5 @@
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::menu::{ContextMenuExt, PopupMenu, PopupMenuItem};
 use gpui_kit::component::{Icon, Sizable};
@@ -7,7 +7,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{Social, UserAction};
-use crate::theme::Palette;
+use crate::theme::{Palette, palette};
 
 /// A username that opens its shares on click and offers every user action on right-click.
 pub fn user_cell<V: EventEmitter<UserAction>>(
@@ -60,6 +60,20 @@ pub fn page_header(
             )
             .child(div().text_color(p.text_weak).child(subtitle.into())),
     )
+}
+
+/// bawkterm's plain button: no fill and a faint border until hovered.
+pub fn button(id: impl Into<ElementId>, cx: &App) -> Button {
+    let p = palette(cx);
+    Button::new(id)
+        .custom(
+            ButtonCustomVariant::new(cx)
+                .foreground(p.text_strong)
+                .hover(p.bg_hover)
+                .active(p.border_weak),
+        )
+        .border_1()
+        .border_color(p.border_weak)
 }
 
 pub fn icon_button(id: impl Into<ElementId>, icon: IconName, tooltip: &'static str) -> Button {

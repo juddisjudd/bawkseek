@@ -408,8 +408,7 @@ impl Render for TransfersView {
             .flex()
             .gap_2()
             .child(
-                Button::new("open-downloads")
-                    .outline()
+                kit::button("open-downloads", cx)
                     .small()
                     .icon(Icon::new(IconName::ExternalLink))
                     .label("open downloads")
@@ -418,8 +417,7 @@ impl Render for TransfersView {
                     })),
             )
             .child(
-                Button::new("clear-finished")
-                    .outline()
+                kit::button("clear-finished", cx)
                     .small()
                     .label("clear finished")
                     .disabled(!finished)

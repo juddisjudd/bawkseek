@@ -2,7 +2,6 @@ use std::rc::Rc;
 
 use chrono::{DateTime, Local};
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{Icon, Sizable, VirtualListScrollHandle, v_virtual_list};
@@ -649,7 +648,7 @@ impl RoomsView {
                             .border_color(p.border_weak)
                             .child(div().flex_1().child(kit::input(&self.composer)))
                             .child(
-                                Button::new("say").primary().small().label("send").on_click(
+                                kit::button("say", cx).small().label("send").on_click(
                                     cx.listener(|this, _, window, cx| this.say(window, cx)),
                                 ),
                             ),
@@ -813,8 +812,7 @@ impl Render for RoomsView {
                 )),
             )
             .child(
-                Button::new("join-room")
-                    .primary()
+                kit::button("join-room", cx)
                     .small()
                     .label("join")
                     .on_click(cx.listener(|this, _, window, cx| this.join_typed(window, cx))),

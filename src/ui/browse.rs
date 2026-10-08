@@ -186,7 +186,7 @@ impl BrowseView {
         )
         .into();
         let session = self.session.clone();
-        window.open_dialog(cx, move |dialog, _, _| {
+        window.open_dialog(cx, move |dialog, _, cx| {
             let (session, username, listing) = (session.clone(), username.clone(), listing.clone());
             dialog.title(title.clone()).child(message.clone()).footer(
                 div()
@@ -194,8 +194,7 @@ impl BrowseView {
                     .justify_end()
                     .gap_2()
                     .child(
-                        Button::new("cancel-tree")
-                            .outline()
+                        kit::button("cancel-tree", cx)
                             .label("cancel")
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     )
@@ -486,8 +485,7 @@ impl BrowseView {
                                     ),
                             )
                             .child(
-                                Button::new("get-tree")
-                                    .outline()
+                                kit::button("get-tree", cx)
                                     .small()
                                     .icon(Icon::new(IconName::FolderDown))
                                     .label("download folder")
@@ -729,8 +727,7 @@ impl Render for BrowseView {
                     .child(kit::input(&self.user).appearance(false)),
             )
             .child(
-                Button::new("open-browse")
-                    .primary()
+                kit::button("open-browse", cx)
                     .small()
                     .label("open")
                     .on_click(cx.listener(|this, _, _, cx| this.open_typed(cx))),
@@ -772,8 +769,7 @@ impl Render for BrowseView {
                         kit::empty_state(IconName::CircleAlert, &format!("could not browse {username}"), &reason, &p)
                             .child(
                                 div().mt_3().child(
-                                    Button::new("retry-browse")
-                                        .outline()
+                                    kit::button("retry-browse", cx)
                                         .small()
                                         .icon(Icon::new(IconName::RotateCw))
                                         .label("try again")

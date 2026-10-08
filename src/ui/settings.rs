@@ -220,7 +220,7 @@ impl SettingsView {
             .update(cx, |state, cx| state.set_value("", window, cx));
         let input = self.new_password.clone();
         let view = cx.entity().downgrade();
-        window.open_dialog(cx, move |dialog, _, _| {
+        window.open_dialog(cx, move |dialog, _, cx| {
             let (input, view) = (input.clone(), view.clone());
             dialog
                 .title("change password")
@@ -238,8 +238,7 @@ impl SettingsView {
                         .justify_end()
                         .gap_2()
                         .child(
-                            Button::new("cancel-password")
-                                .outline()
+                            kit::button("cancel-password", cx)
                                 .label("cancel")
                                 .on_click(|_, window, cx| window.close_dialog(cx)),
                         )
@@ -429,15 +428,13 @@ impl Render for SettingsView {
                             .gap_3()
                             .child(kit::strong(self.username.clone(), &p))
                             .child(
-                                Button::new("logout")
-                                    .outline()
+                                kit::button("logout", cx)
                                     .small()
                                     .label("log out")
                                     .on_click(cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::Logout))),
                             )
                             .child(
-                                Button::new("password")
-                                    .outline()
+                                kit::button("password", cx)
                                     .small()
                                     .label("change password…")
                                     .on_click(cx.listener(|this, _, window, cx| {
@@ -502,7 +499,7 @@ impl Render for SettingsView {
                             .flex()
                             .gap_2()
                             .child(div().flex_1().child(kit::input(&self.download_dir)))
-                            .child(Button::new("browse").outline().label("browse…").on_click(
+                            .child(kit::button("browse", cx).label("browse…").on_click(
                                 cx.listener(|this, _, window, cx| this.browse(window, cx)),
                             )),
                         &p,

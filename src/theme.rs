@@ -444,7 +444,10 @@ mod tests {
         for preset in &presets {
             assert_eq!(preset.colors.len(), 26, "{}", preset.id);
             assert!(
-                preset.colors.values().all(|value| super::hex(value) != Default::default()),
+                preset
+                    .colors
+                    .values()
+                    .all(|value| super::hex(value) != Default::default()),
                 "{}",
                 preset.id
             );

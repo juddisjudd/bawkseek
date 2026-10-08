@@ -180,7 +180,7 @@ impl UsersView {
             .update(cx, |state, cx| state.set_value("1", window, cx));
         let (days, session) = (self.days.clone(), self.session.clone());
         let title: SharedString = format!("give {username} privileges").into();
-        window.open_dialog(cx, move |dialog, _, _| {
+        window.open_dialog(cx, move |dialog, _, cx| {
             let (days, session, username) = (days.clone(), session.clone(), username.clone());
             dialog
                 .title(title.clone())
@@ -198,8 +198,7 @@ impl UsersView {
                         .justify_end()
                         .gap_2()
                         .child(
-                            Button::new("cancel-give")
-                                .outline()
+                            kit::button("cancel-give", cx)
                                 .label("cancel")
                                 .on_click(|_, window, cx| window.close_dialog(cx)),
                         )
@@ -361,8 +360,7 @@ impl UsersView {
                     .when(can_give, |this| {
                         let username = username.clone();
                         this.child(
-                            Button::new("card-give")
-                                .outline()
+                            kit::button("card-give", cx)
                                 .small()
                                 .icon(Icon::new(IconName::StarFill))
                                 .label("give privileges…")
@@ -479,8 +477,7 @@ impl Render for UsersView {
                     .child(kit::input(&self.target).appearance(false)),
             )
             .child(
-                Button::new("look-up")
-                    .primary()
+                kit::button("look-up", cx)
                     .small()
                     .label("look up")
                     .on_click(cx.listener(|this, _, window, cx| this.look_up_typed(window, cx))),

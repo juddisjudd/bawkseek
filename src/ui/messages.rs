@@ -1,6 +1,5 @@
 use chrono::{DateTime, Local};
 use gpui_kit::assets::IconName;
-use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::menu::{ContextMenuExt, PopupMenuItem};
 use gpui_kit::component::scroll::ScrollableElement;
@@ -407,8 +406,7 @@ impl MessagesView {
                     .border_color(p.border_weak)
                     .child(div().flex_1().child(kit::input(&self.composer)))
                     .child(
-                        Button::new("send")
-                            .primary()
+                        kit::button("send", cx)
                             .small()
                             .label("send")
                             .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
@@ -501,8 +499,7 @@ impl Render for MessagesView {
                     .child(kit::input(&self.target).appearance(false)),
             )
             .child(
-                Button::new("open-chat")
-                    .primary()
+                kit::button("open-chat", cx)
                     .small()
                     .label("open")
                     .on_click(cx.listener(|this, _, window, cx| this.open_typed(window, cx))),
