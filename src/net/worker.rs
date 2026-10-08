@@ -12,10 +12,13 @@ use soulseek_rs::{Client, ClientSettings, DownloadStatus, RoomEvent, SessionLoss
 use super::browse::Listing;
 use super::discover::Discover;
 use super::group::group;
+use super::portmap::{PortMap, PortMapper};
 use super::sharing::{Scanner, Uploads};
 use super::social::{Buddies, Lookup};
 use super::wishlist::Wishlist;
-use super::{Command, DlState, DownloadRow, Event, NoticeLevel, Status, Wanted, unix_now};
+use super::{
+    Command, DlState, DownloadRow, Event, LoginSettings, NoticeLevel, Status, Wanted, unix_now,
+};
 use crate::format;
 
 const TICK: Duration = Duration::from_millis(150);
@@ -26,6 +29,7 @@ const PING_EVERY: Duration = Duration::from_secs(60);
 const FOLDER_TIMEOUT: Duration = Duration::from_secs(25);
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
 const BROWSE_TIMEOUT: Duration = Duration::from_secs(90);
+const PRIVILEGES_WAIT: Duration = Duration::from_secs(30);
 
 pub fn spawn() -> (Sender<Command>, Receiver<Event>) {
     let (command_tx, command_rx) = mpsc::channel();
@@ -91,6 +95,10 @@ struct Worker {
     away: bool,
     wishlist: Wishlist,
     discover: Discover,
+    upnp: bool,
+    portmap: Option<PortMapper>,
+    download_limit: u64,
+    privileges_until: Option<Instant>,
 }
 
 impl Worker {
@@ -125,6 +133,10 @@ impl Worker {
             away: false,
             wishlist: Wishlist::default(),
             discover: Discover::default(),
+            upnp: false,
+            portmap: None,
+            download_limit: 0,
+            privileges_until: None,
         }
     }
 
@@ -153,27 +165,60 @@ impl Worker {
 
     fn handle(&mut self, command: Command) {
         match command {
-            Command::Login {
-                username,
-                password,
-                listen_port,
-                download_dir,
-                shares,
-                upload_slots,
-                buddies,
-                likes,
-                dislikes,
-            } => {
+            Command::Login(settings) => {
+                let LoginSettings {
+                    username,
+                    password,
+                    listen_port,
+                    download_dir,
+                    shares,
+                    upload_slots,
+                    buddies,
+                    likes,
+                    dislikes,
+                    upnp,
+                    download_limit,
+                } = settings;
                 self.buddies.set(buddies);
                 self.discover.set_interests(likes, dislikes);
                 self.download_dir = download_dir;
                 self.shares = shares;
                 self.upload_slots = upload_slots;
+                self.upnp = upnp;
+                self.download_limit = download_limit;
                 self.login(Credentials {
                     username,
                     password,
                     listen_port,
                 });
+            }
+            Command::SetUpnp(on) => {
+                self.upnp = on;
+                if on {
+                    self.map_port();
+                } else {
+                    self.portmap = None;
+                    self.emit(Event::PortMap(PortMap::Off));
+                }
+            }
+            Command::SetDownloadLimit(kilobytes) => {
+                self.download_limit = kilobytes;
+                if let Some(client) = &self.client {
+                    client.set_download_speed_limit(kilobytes * 1024);
+                }
+            }
+            Command::ChangePassword(password) => {
+                let result = match &self.client {
+                    Some(client) => client.change_password(&password),
+                    None => Err(SoulseekRs::NotConnected),
+                };
+                match result {
+                    Ok(()) => self.notice(NoticeLevel::Info, "password change sent to the server"),
+                    Err(err) => self.notice(
+                        NoticeLevel::Warning,
+                        format!("could not change the password: {}", describe(&err)),
+                    ),
+                }
             }
             Command::Logout => self.logout(),
             Command::Reconnect => self.reconnect_now(),
@@ -390,6 +435,9 @@ impl Worker {
                     );
                 }
                 client.set_upload_slots(self.upload_slots);
+                client.set_download_speed_limit(self.download_limit * 1024);
+                let _ = client.check_privileges();
+                self.privileges_until = Some(Instant::now() + PRIVILEGES_WAIT);
                 let _ = client.request_room_list();
                 self.buddies.watch_all(&client);
                 self.discover.announce(&client);
@@ -398,6 +446,9 @@ impl Worker {
                 self.client = Some(Arc::new(client));
                 self.pinged = Instant::now();
                 self.rescan();
+                if self.upnp {
+                    self.map_port();
+                }
             }
             Ok(false) => self.emit(Event::Status(Status::Failed(
                 "the server refused the login".into(),
@@ -406,7 +457,6 @@ impl Worker {
         }
     }
 
-    /// Shares are scanned after login, so a slow disk never delays it, and again after a reconnect resets the server's counts.
     /// The library forgets rooms and share counts across a re-login, so put them back.
     fn restore_session(&self, client: &Client) {
         self.requeue_peers(client);
@@ -424,6 +474,7 @@ impl Worker {
         }
     }
 
+    /// Shares are scanned after login, so a slow disk never delays it.
     fn rescan(&self) {
         if let Some(client) = &self.client {
             self.scanner.scan(client.clone(), &self.shares);
@@ -476,7 +527,17 @@ impl Worker {
         });
     }
 
+    fn map_port(&mut self) {
+        if let Some(client) = &self.client
+            && let Some(port) = client.listen_port()
+        {
+            self.portmap = Some(PortMapper::start(port, self.events.clone()));
+        }
+    }
+
     fn drop_client(&mut self) {
+        self.portmap = None;
+        self.privileges_until = None;
         self.scanner.invalidate();
         self.uploads.reset();
         self.browses.clear();
@@ -648,6 +709,14 @@ impl Worker {
         if let Some(cards) = self.buddies.poll(&client) {
             self.emit(Event::Buddies(cards));
         }
+        if let Some(until) = self.privileges_until {
+            if let Some(seconds) = client.own_privilege_seconds() {
+                self.privileges_until = None;
+                self.emit(Event::Privileges(seconds));
+            } else if Instant::now() >= until {
+                self.privileges_until = None;
+            }
+        }
         if let Some(discovery) = self.discover.poll(&client) {
             self.emit(Event::Discovery(discovery));
         }
@@ -786,7 +855,7 @@ impl Worker {
                 let fresh = self.wishlist.fresh(query, &results);
                 if fresh > 0 {
                     let _ = self.events.send(Event::Notice(
-                        NoticeLevel::Info,
+                        NoticeLevel::Alert,
                         format!(
                             "wishlist: {} for {query}",
                             format::plural(fresh, "new result", "new results")
@@ -877,7 +946,30 @@ impl Worker {
         }
     }
 
+    /// One alert per folder, once every file in it has arrived.
+    fn announce_finished(&self, dir: &std::path::Path) {
+        let rows: Vec<&Row> = self
+            .rows
+            .iter()
+            .filter(|row| row.view.local_dir == *dir)
+            .collect();
+        if rows.iter().any(|row| row.view.state != DlState::Completed) {
+            return;
+        }
+        let label = match rows.as_slice() {
+            [only] => only.view.name.clone(),
+            [first, ..] if !first.view.folder.is_empty() => format!(
+                "{} ({})",
+                first.view.folder,
+                format::plural(rows.len(), "file", "files")
+            ),
+            _ => format::plural(rows.len(), "file", "files"),
+        };
+        self.notice(NoticeLevel::Alert, format!("downloaded {label}"));
+    }
+
     fn poll_downloads(&mut self, client: &Client) {
+        let mut finished_dirs: Vec<PathBuf> = Vec::new();
         for row in &mut self.rows {
             let Some(status) = &row.status else {
                 continue;
@@ -887,6 +979,9 @@ impl Worker {
                 let state = map_status(update);
                 terminal = !state.is_live();
                 if row.view.state != state {
+                    if state == DlState::Completed {
+                        finished_dirs.push(row.view.local_dir.clone());
+                    }
                     row.view.state = state;
                     self.rows_dirty = true;
                 }
@@ -894,6 +989,10 @@ impl Worker {
             if terminal {
                 row.status = None;
             }
+        }
+        finished_dirs.dedup();
+        for dir in finished_dirs {
+            self.announce_finished(&dir);
         }
 
         if self.queue_checked.elapsed() >= QUEUE_REFRESH {

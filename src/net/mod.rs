@@ -1,6 +1,7 @@
 mod browse;
 mod discover;
 mod group;
+mod portmap;
 mod rooms;
 mod sharing;
 mod social;
@@ -19,6 +20,7 @@ use crate::chats::Chats;
 pub use browse::{Listing, Node};
 pub use discover::Discovery;
 pub use group::{FileHit, FolderHit, SearchHits};
+pub use portmap::PortMap;
 pub use rooms::{RoomLine, Rooms};
 pub use sharing::{overlaps, virtual_roots};
 pub use social::{Presence, UserCard};
@@ -146,18 +148,26 @@ pub struct DownloadRow {
     pub state: DlState,
 }
 
+/// Everything the worker needs from the saved settings to start a session.
+pub struct LoginSettings {
+    pub username: String,
+    pub password: String,
+    pub listen_port: u16,
+    pub download_dir: PathBuf,
+    pub shares: Vec<PathBuf>,
+    pub upload_slots: usize,
+    pub buddies: Vec<String>,
+    pub likes: Vec<String>,
+    pub dislikes: Vec<String>,
+    pub upnp: bool,
+    pub download_limit: u64,
+}
+
 pub enum Command {
-    Login {
-        username: String,
-        password: String,
-        listen_port: u16,
-        download_dir: PathBuf,
-        shares: Vec<PathBuf>,
-        upload_slots: usize,
-        buddies: Vec<String>,
-        likes: Vec<String>,
-        dislikes: Vec<String>,
-    },
+    Login(LoginSettings),
+    SetUpnp(bool),
+    SetDownloadLimit(u64),
+    ChangePassword(String),
     Logout,
     Reconnect,
     Search(String),
@@ -226,6 +236,7 @@ pub enum Command {
 pub enum NoticeLevel {
     Info,
     Warning,
+    Alert,
 }
 
 pub enum Event {
@@ -253,6 +264,8 @@ pub enum Event {
         events: Vec<soulseek_rs::RoomEvent>,
     },
     Buddies(Vec<UserCard>),
+    PortMap(PortMap),
+    Privileges(u32),
     Discovery(Discovery),
     Card(UserCard),
     Notice(NoticeLevel, String),
@@ -304,6 +317,8 @@ pub struct Session {
     pub discovery: Discovery,
     pub likes: Vec<String>,
     pub dislikes: Vec<String>,
+    pub portmap: PortMap,
+    pub privileges: Option<u32>,
     _pump: Task<()>,
 }
 
@@ -344,6 +359,8 @@ impl Session {
             discovery: Discovery::default(),
             likes: Vec::new(),
             dislikes: Vec::new(),
+            portmap: PortMap::Off,
+            privileges: None,
             _pump: pump,
         }
     }
@@ -416,7 +433,7 @@ impl Session {
                 let read = self.viewing_chat.as_deref() == Some(username.as_str());
                 if new && !read {
                     cx.emit(Notice(
-                        NoticeLevel::Info,
+                        NoticeLevel::Alert,
                         format!("{username}: {text}").into(),
                     ));
                 }
@@ -445,6 +462,8 @@ impl Session {
                 self.buddies = cards;
             }
             Event::Discovery(discovery) => self.discovery = discovery,
+            Event::PortMap(state) => self.portmap = state,
+            Event::Privileges(seconds) => self.privileges = Some(seconds),
             Event::Card(card) => {
                 if self
                     .card
@@ -471,6 +490,8 @@ impl Session {
         self.card = None;
         self.away = false;
         self.discovery = Discovery::default();
+        self.portmap = PortMap::Off;
+        self.privileges = None;
     }
 
     pub fn send(&self, command: Command) {

@@ -21,6 +21,8 @@ pub struct Config {
     pub ignored: Vec<String>,
     pub likes: Vec<String>,
     pub dislikes: Vec<String>,
+    pub upnp: bool,
+    pub download_limit: u64,
 }
 
 impl Default for Config {
@@ -37,6 +39,8 @@ impl Default for Config {
             ignored: Vec::new(),
             likes: Vec::new(),
             dislikes: Vec::new(),
+            upnp: true,
+            download_limit: 0,
         }
     }
 }

@@ -4,16 +4,17 @@ use std::time::{Duration, Instant};
 use soulseek_rs::{Client, SearchResult};
 
 const FIRST_RUN: Duration = Duration::from_secs(20);
+const BASELINE: Duration = Duration::from_secs(60);
 
 type Key = (String, String);
 
-/// Saved searches the server re-runs on its own schedule; each run wipes the library's
-/// previous results, so they are kept and merged here.
+/// Saved searches the server reruns on its schedule; each run wipes the library's results, so they are merged here.
 #[derive(Default)]
 pub struct Wishlist {
     wishes: Vec<String>,
     kept: HashMap<String, Vec<SearchResult>>,
     seen: HashMap<String, HashSet<Key>>,
+    quiet_until: HashMap<String, Instant>,
     next_run: Option<Instant>,
 }
 
@@ -31,6 +32,8 @@ impl Wishlist {
             let current = client.get_search_results(&query);
             self.seen.insert(query.clone(), keys(&current));
         }
+        self.quiet_until
+            .insert(query.clone(), Instant::now() + BASELINE);
         self.wishes.push(query);
         if self.next_run.is_none() {
             self.next_run = Some(Instant::now() + FIRST_RUN);
@@ -41,6 +44,7 @@ impl Wishlist {
         self.wishes.retain(|wish| wish != query);
         self.kept.remove(query);
         self.seen.remove(query);
+        self.quiet_until.remove(query);
     }
 
     pub fn is_wish(&self, query: &str) -> bool {
@@ -72,21 +76,27 @@ impl Wishlist {
         merge(kept, current)
     }
 
-    /// How many of `results` are new since the last call, remembering them; the first call only sets a baseline.
     pub fn fresh(&mut self, query: &str, results: &[SearchResult]) -> usize {
-        let Some(seen) = self.seen.get_mut(query) else {
-            if !results.is_empty() {
-                self.seen.insert(query.to_string(), keys(results));
-            }
+        self.fresh_at(query, results, Instant::now())
+    }
+
+    /// New results since the last call; results trickle in for a while, so the first minute only builds a baseline.
+    fn fresh_at(&mut self, query: &str, results: &[SearchResult], now: Instant) -> usize {
+        if results.is_empty() && !self.quiet_until.contains_key(query) {
             return 0;
-        };
+        }
+        let quiet_until = *self
+            .quiet_until
+            .entry(query.to_string())
+            .or_insert(now + BASELINE);
+        let seen = self.seen.entry(query.to_string()).or_default();
         let mut fresh = 0;
         for key in keys(results) {
             if seen.insert(key) {
                 fresh += 1;
             }
         }
-        fresh
+        if now < quiet_until { 0 } else { fresh }
     }
 }
 
@@ -158,9 +168,24 @@ mod tests {
     #[test]
     fn counts_only_new_results() {
         let mut wishlist = Wishlist::default();
-        assert_eq!(wishlist.fresh("q", &[]), 0);
-        assert_eq!(wishlist.fresh("q", &[result("ann", &["1", "2"])]), 0);
-        assert_eq!(wishlist.fresh("q", &[result("ann", &["2", "3"])]), 1);
-        assert_eq!(wishlist.fresh("q", &[result("bob", &["2"])]), 1);
+        let start = Instant::now();
+        let later = |secs| start + Duration::from_secs(secs);
+        assert_eq!(wishlist.fresh_at("q", &[], start), 0);
+        assert_eq!(
+            wishlist.fresh_at("q", &[result("ann", &["1"])], later(10)),
+            0
+        );
+        assert_eq!(
+            wishlist.fresh_at("q", &[result("ann", &["1", "2"])], later(40)),
+            0
+        );
+        assert_eq!(
+            wishlist.fresh_at("q", &[result("ann", &["2", "3"])], later(75)),
+            1
+        );
+        assert_eq!(
+            wishlist.fresh_at("q", &[result("bob", &["2"])], later(80)),
+            1
+        );
     }
 }

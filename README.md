@@ -2,7 +2,7 @@
 
 A Soulseek desktop client for Windows, built in Rust with [GPUI Kit](https://gpui-kit.com). It looks and feels like [bawkterm](https://bawkterm.com).
 
-> Status: early. Search, downloads, sharing, browsing, messages, chat rooms, buddies, the wishlist and recommendations work. Network and settings polish come next.
+> Status: early. Search, downloads, sharing, browsing, messages, chat rooms, buddies, the wishlist and recommendations work: the Soulseek features the protocol library supports are all in.
 
 ## What works
 
@@ -19,9 +19,10 @@ A Soulseek desktop client for Windows, built in Rust with [GPUI Kit](https://gpu
 - **Sharing**: share any number of folders from the uploads page. They are scanned in the background after login, so a big library never delays it. Other users see each folder by its name: `D:\Music` appears as `Music`. A folder inside one you already share is refused. Everything in a shared folder is shared, hidden files included.
 - **Uploads**: who downloads from you, with progress, speed and queue place. Cancel a running upload, clear finished ones, and set how many people can download at once (upload slots, 1 to 50, default 10).
 - **Reconnects**: a dropped server connection reconnects by itself. Queued downloads resume when their peer is back.
-- **Settings**: download folder, listening port, dark or light theme.
+- **Notifications**: new messages, finished folders and new wishlist results show as toasts, and in the Windows notification center when bawkseek is in the background.
+- **Settings**: download folder and speed limit, listening port with automatic UPnP port mapping, away status, privileges, password change, dark or light theme.
 
-Not built yet: UPnP port mapping, an upload speed limit, banning users.
+Not in the Soulseek library yet, so not here either: an upload speed limit, refusing downloads from banned users, your own profile text and picture.
 
 ## Build
 
@@ -53,7 +54,7 @@ The first build compiles GPUI and takes a few minutes.
 
 bawkseek listens on port 2234 for other users. When that port is busy, it picks a free one and tells you. Windows asks once whether to allow it through the firewall.
 
-Forward TCP port 2234 on your router to this PC. There is no UPnP yet, so bawkseek cannot open the port for you. Without the forward, downloads from reachable users still work. But a user who cannot be reached either gets none of your search results and cannot download from you.
+bawkseek asks your router to open the port over UPnP (settings, network). If your router does not support UPnP, forward TCP port 2234 to this PC yourself. Without an open port, downloads from reachable users still work, but a user who cannot be reached either gets none of your search results and cannot download from you.
 
 To see the protocol traffic, set two environment variables before you start it:
 

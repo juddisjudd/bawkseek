@@ -14,6 +14,7 @@ use gpui_kit::*;
 fn main() {
     application().with_assets(assets::AppAssets).run(|cx| {
         init(cx);
+        cx.set_app_identity("com.bawkseek.app", "bawkseek");
         theme::init(cx);
 
         let bounds = Bounds::centered(None, size(px(1280.), px(820.)), cx);

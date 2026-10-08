@@ -19,7 +19,7 @@ use gpui_kit::*;
 use std::collections::HashSet;
 
 use crate::config::{self, Config};
-use crate::net::{Command, Notice, NoticeLevel, Session, Status};
+use crate::net::{Command, LoginSettings, Notice, NoticeLevel, Session, Status};
 use crate::theme::palette;
 
 use browse::BrowseView;
@@ -104,7 +104,7 @@ impl Workspace {
         let rooms = cx.new(|cx| RoomsView::new(session.clone(), window, cx));
         let users = cx.new(|cx| UsersView::new(session.clone(), window, cx));
         let discover = cx.new(|cx| DiscoverView::new(session.clone(), window, cx));
-        let settings = cx.new(|cx| SettingsView::new(&config, window, cx));
+        let settings = cx.new(|cx| SettingsView::new(&config, session.clone(), window, cx));
 
         let subscriptions = vec![
             cx.subscribe_in(&login, window, |this, _, request: &LoginRequest, _, cx| {
@@ -129,6 +129,10 @@ impl Workspace {
                 let note = match notice.0 {
                     NoticeLevel::Info => Notification::info(notice.1.clone()),
                     NoticeLevel::Warning => Notification::warning(notice.1.clone()),
+                    NoticeLevel::Alert if window.is_window_active() => {
+                        Notification::info(notice.1.clone())
+                    }
+                    NoticeLevel::Alert => Notification::info(notice.1.clone()).in_app_and_system(),
                 };
                 window.push_notification(note, cx);
             }),
@@ -179,7 +183,7 @@ impl Workspace {
             password: password.clone(),
             remember,
         });
-        let command = Command::Login {
+        let command = Command::Login(LoginSettings {
             username,
             password,
             listen_port: self.config.listen_port,
@@ -189,7 +193,9 @@ impl Workspace {
             buddies: self.config.buddies.clone(),
             likes: self.config.likes.clone(),
             dislikes: self.config.dislikes.clone(),
-        };
+            upnp: self.config.upnp,
+            download_limit: self.config.download_limit,
+        });
         self.session
             .update(cx, |session, cx| session.login(command, cx));
     }
@@ -272,6 +278,24 @@ impl Workspace {
             SettingsEvent::Away(away) => {
                 self.session
                     .update(cx, |session, cx| session.set_away(*away, cx));
+            }
+            SettingsEvent::Upnp(on) => {
+                self.config.upnp = *on;
+                self.session.read(cx).send(Command::SetUpnp(*on));
+            }
+            SettingsEvent::DownloadLimit(limit) => {
+                self.config.download_limit = *limit;
+                self.session
+                    .read(cx)
+                    .send(Command::SetDownloadLimit(*limit));
+            }
+            SettingsEvent::ChangePassword(password) => {
+                self.session
+                    .read(cx)
+                    .send(Command::ChangePassword(password.clone()));
+                if self.config.remember {
+                    config::store_password(&self.config.username, password);
+                }
             }
             SettingsEvent::Logout => {
                 config::forget_password(&self.config.username);
