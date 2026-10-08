@@ -1,10 +1,39 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
+use gpui_kit::component::menu::{ContextMenuExt, PopupMenu, PopupMenuItem};
 use gpui_kit::component::{Icon, Sizable};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use super::UserAction;
 use crate::theme::Palette;
+
+/// A username that opens its shares on click and offers every user action on right-click.
+pub fn user_cell<V: EventEmitter<UserAction>>(
+    id: impl Into<ElementId>,
+    username: &str,
+    color: Hsla,
+    p: &Palette,
+    cx: &mut Context<V>,
+) -> impl IntoElement {
+    let browse = username.to_string();
+    let menu_user = username.to_string();
+    let view = cx.entity().downgrade();
+    // The menu renders inside this wrapper, so it must not inherit the link's hover underline.
+    div()
+        .id(id)
+        .flex()
+        .min_w_0()
+        .child(
+            user_link("link", username.to_string(), color, p).on_click(cx.listener(
+                move |_, _, _, cx| {
+                    cx.stop_propagation();
+                    cx.emit(UserAction::Browse(browse.clone()));
+                },
+            )),
+        )
+        .context_menu(move |menu, _, _| user_menu(menu, &menu_user, view.clone()))
+}
 
 pub fn page_header(
     title: impl Into<SharedString>,
@@ -117,6 +146,36 @@ pub fn tag(label: impl Into<SharedString>, p: &Palette) -> Div {
 
 pub fn strong(text: impl Into<SharedString>, p: &Palette) -> Div {
     div().text_color(p.text_strong).child(text.into())
+}
+
+type MenuEntry = (&'static str, IconName, fn(String) -> UserAction);
+
+/// The actions offered for any username, as items of a right-click menu.
+pub fn user_menu<V: EventEmitter<UserAction>>(
+    menu: PopupMenu,
+    username: &str,
+    view: WeakEntity<V>,
+) -> PopupMenu {
+    let entries: [MenuEntry; 2] = [
+        ("browse shares", IconName::FolderSearch, UserAction::Browse),
+        (
+            "send message",
+            IconName::MessagesSquare,
+            UserAction::Message,
+        ),
+    ];
+    entries
+        .into_iter()
+        .fold(menu, |menu, (label, icon, action)| {
+            let (view, username) = (view.clone(), username.to_string());
+            menu.item(
+                PopupMenuItem::new(label)
+                    .icon(Icon::new(icon))
+                    .on_click(move |_, _, cx| {
+                        let _ = view.update(cx, |_, cx| cx.emit(action(username.clone())));
+                    }),
+            )
+        })
 }
 
 pub fn user_link(

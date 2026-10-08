@@ -2,6 +2,7 @@ mod browse;
 mod chrome;
 mod kit;
 mod login;
+mod messages;
 mod search;
 mod settings;
 mod transfers;
@@ -21,13 +22,18 @@ use crate::theme::palette;
 use browse::BrowseView;
 use chrome::{Page, Presence};
 use login::{LoginRequest, LoginView};
+use messages::MessagesView;
 use search::SearchView;
 use settings::{SettingsEvent, SettingsView};
 use transfers::TransfersView;
 use uploads::{UploadsEvent, UploadsView};
 
-/// Asks the workspace to open a user's shares.
-pub struct OpenUser(pub String);
+/// Something to do with a user, raised by any view that shows usernames.
+#[derive(Clone)]
+pub enum UserAction {
+    Browse(String),
+    Message(String),
+}
 
 struct PendingLogin {
     username: String,
@@ -46,6 +52,7 @@ pub struct Workspace {
     transfers: Entity<TransfersView>,
     uploads: Entity<UploadsView>,
     browse: Entity<BrowseView>,
+    messages: Entity<MessagesView>,
     settings: Entity<SettingsView>,
     _subscriptions: Vec<Subscription>,
 }
@@ -72,6 +79,7 @@ impl Workspace {
             )
         });
         let browse = cx.new(|cx| BrowseView::new(session.clone(), window, cx));
+        let messages = cx.new(|cx| MessagesView::new(session.clone(), window, cx));
         let settings = cx.new(|cx| SettingsView::new(&config, window, cx));
 
         let subscriptions = vec![
@@ -88,6 +96,7 @@ impl Workspace {
             cx.subscribe_in(&search, window, Self::open_user),
             cx.subscribe_in(&transfers, window, Self::open_user),
             cx.subscribe_in(&uploads, window, Self::open_user),
+            cx.subscribe_in(&messages, window, Self::open_user),
             cx.subscribe_in(&session, window, |_, _, notice: &Notice, window, cx| {
                 let note = match notice.0 {
                     NoticeLevel::Info => Notification::info(notice.1.clone()),
@@ -109,6 +118,7 @@ impl Workspace {
             transfers,
             uploads,
             browse,
+            messages,
             settings,
             _subscriptions: subscriptions,
         };
@@ -263,14 +273,22 @@ impl Workspace {
     fn open_user<V>(
         &mut self,
         _: &Entity<V>,
-        event: &OpenUser,
-        _: &mut Window,
+        event: &UserAction,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.page = Page::Browse;
-        self.browse
-            .update(cx, |browse, cx| browse.open(&event.0, cx));
-        cx.notify();
+        match event {
+            UserAction::Browse(username) => {
+                self.browse
+                    .update(cx, |browse, cx| browse.open(username, cx));
+                self.select(Page::Browse, window, cx);
+            }
+            UserAction::Message(username) => {
+                self.messages
+                    .update(cx, |messages, cx| messages.open(username, window, cx));
+                self.select(Page::Messages, window, cx);
+            }
+        }
     }
 
     fn save(&self) {
@@ -281,6 +299,9 @@ impl Workspace {
 
     fn select(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
         self.page = page;
+        self.messages.update(cx, |messages, cx| {
+            messages.set_visible(page == Page::Messages, cx)
+        });
         match page {
             Page::Search => self
                 .search
@@ -288,6 +309,9 @@ impl Workspace {
             Page::Browse => self
                 .browse
                 .update(cx, |browse, cx| browse.focus(window, cx)),
+            Page::Messages => self
+                .messages
+                .update(cx, |messages, cx| messages.focus(window, cx)),
             _ => {}
         }
         cx.notify();
@@ -337,18 +361,6 @@ impl Workspace {
 
 fn placeholder(page: Page, cx: &App) -> Div {
     let p = palette(cx);
-    let (icon, title, body) = match page {
-        Page::Rooms => (
-            IconName::Hash,
-            "chat rooms are not built yet",
-            "public rooms will live here.",
-        ),
-        _ => (
-            IconName::MessagesSquare,
-            "private messages are not built yet",
-            "conversations with other users will live here.",
-        ),
-    };
     div()
         .size_full()
         .flex()
@@ -356,7 +368,12 @@ fn placeholder(page: Page, cx: &App) -> Div {
         .px(px(40.))
         .pt(px(32.))
         .child(kit::page_header(page.label(), "coming later", &p))
-        .child(kit::empty_state(icon, title, body, &p))
+        .child(kit::empty_state(
+            IconName::Hash,
+            "chat rooms are not built yet",
+            "public rooms will live here.",
+            &p,
+        ))
 }
 
 impl Render for Workspace {
@@ -372,6 +389,7 @@ impl Render for Workspace {
             (Page::Search, session.searches.len()),
             (Page::Transfers, session.active_downloads()),
             (Page::Uploads, session.active_uploads()),
+            (Page::Messages, session.chats.unread()),
         ];
 
         let root = div()
@@ -403,6 +421,7 @@ impl Render for Workspace {
             Page::Transfers => self.transfers.clone().into_any_element(),
             Page::Uploads => self.uploads.clone().into_any_element(),
             Page::Browse => self.browse.clone().into_any_element(),
+            Page::Messages => self.messages.clone().into_any_element(),
             Page::Settings => self.settings.clone().into_any_element(),
             page => placeholder(page, cx).into_any_element(),
         };

@@ -13,7 +13,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::{OpenUser, kit};
+use super::{UserAction, kit};
 use crate::format;
 use crate::net::{Command, Session, UlState, UploadRow, overlaps, virtual_roots};
 use crate::theme::{Palette, palette};
@@ -394,16 +394,13 @@ fn group_row(
                 .size(px(14.))
                 .text_color(p.text_weaker),
         )
-        .child({
-            let username = group.username.clone();
-            kit::user_link(
-                ("upload-user", gx),
-                group.username.clone(),
-                p.text_strong,
-                p,
-            )
-            .on_click(cx.listener(move |_, _, _, cx| cx.emit(OpenUser(username.clone()))))
-        })
+        .child(kit::user_cell(
+            ("upload-user", gx),
+            &group.username,
+            p.text_strong,
+            p,
+            cx,
+        ))
         .child(div().flex_1())
         .child(
             div()
@@ -512,7 +509,7 @@ fn file_row(
         )
 }
 
-impl EventEmitter<OpenUser> for UploadsView {}
+impl EventEmitter<UserAction> for UploadsView {}
 
 impl Render for UploadsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

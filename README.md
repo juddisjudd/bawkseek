@@ -2,7 +2,7 @@
 
 A Soulseek desktop client for Windows, built in Rust with [GPUI Kit](https://gpui-kit.com). It looks and feels like [bawkterm](https://bawkterm.com).
 
-> Status: early. Search, downloads, sharing and browsing work. Chat and messages come next.
+> Status: early. Search, downloads, sharing, browsing and private messages work. Chat rooms come next.
 
 ## What works
 
@@ -10,13 +10,15 @@ A Soulseek desktop client for Windows, built in Rust with [GPUI Kit](https://gpu
 - **Search**: results arrive live and group by folder, with the format and quality of each folder (flac 24/96, mp3 320). Sort by speed, folder, user, file count or size. Filter by text (`-word` excludes), or show free slots only. Each search stays open in its own tab.
 - **Download**: a single file, or a whole folder. A folder download asks the user for the complete folder listing and keeps subfolders such as `CD1` or `Scans`.
 - **Browse**: open any user's shared folders as a tree, from the browse page or by clicking a username in search, transfers or uploads. Filter by folder or file name, download single files or a whole folder with its subfolders. Folders with more than 200 files ask before downloading.
+- **Messages**: private conversations with any user, even offline ones. Unread counts in the sidebar, a toast for new messages, and logs saved on this computer per account (`%APPDATA%\bawkseek\messages`).
+- **User menu**: right-click any username to browse their shares or send a message.
 - **Transfers**: progress, speed and queue place per file, grouped by folder. Pause, resume, retry, cancel, open the folder.
 - **Sharing**: share any number of folders from the uploads page. They are scanned in the background after login, so a big library never delays it. Other users see each folder by its name: `D:\Music` appears as `Music`. A folder inside one you already share is refused. Everything in a shared folder is shared, hidden files included.
 - **Uploads**: who downloads from you, with progress, speed and queue place. Cancel a running upload, clear finished ones, and set how many people can download at once (upload slots, 1 to 50, default 10).
 - **Reconnects**: a dropped server connection reconnects by itself. Queued downloads resume when their peer is back.
 - **Settings**: download folder, listening port, dark or light theme.
 
-Not built yet: chat rooms, private messages, wishlist, UPnP port mapping, an upload speed limit, banning users.
+Not built yet: chat rooms, user info and buddies, wishlist, UPnP port mapping, an upload speed limit, banning users.
 
 ## Build
 

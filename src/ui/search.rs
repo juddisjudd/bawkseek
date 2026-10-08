@@ -11,7 +11,7 @@ use gpui_kit::component::{Icon, Sizable, VirtualListScrollHandle, v_virtual_list
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::{OpenUser, kit};
+use super::{UserAction, kit};
 use crate::format;
 use crate::net::{Command, DlState, FolderHit, SearchHits, Session, Wanted};
 use crate::theme::{Palette, palette};
@@ -423,7 +423,6 @@ fn folder_row(
     cx: &mut Context<SearchView>,
 ) -> impl IntoElement {
     let key = (hit.username.clone(), hit.folder.clone());
-    let username = hit.username.clone();
     let row = div()
         .id(("folder", ix))
         .h(px(FOLDER_ROW))
@@ -468,14 +467,13 @@ fn folder_row(
                         .text_color(p.text_weaker),
                 ),
         )
-        .child(div().w(px(USER_W)).flex_none().flex().child(
-            kit::user_link(("user", ix), hit.username.clone(), p.text, p).on_click(cx.listener(
-                move |_, _, _, cx| {
-                    cx.stop_propagation();
-                    cx.emit(OpenUser(username.clone()));
-                },
-            )),
-        ))
+        .child(div().w(px(USER_W)).flex_none().flex().child(kit::user_cell(
+            ("user", ix),
+            &hit.username,
+            p.text,
+            p,
+            cx,
+        )))
         .child(
             div()
                 .w(px(FILES_W))
@@ -637,7 +635,7 @@ fn is_audio(ext: &str) -> bool {
     )
 }
 
-impl EventEmitter<OpenUser> for SearchView {}
+impl EventEmitter<UserAction> for SearchView {}
 
 impl Render for SearchView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

@@ -40,8 +40,12 @@ fn default_download_dir() -> PathBuf {
         .join("bawkseek")
 }
 
+pub fn data_dir() -> Option<PathBuf> {
+    Some(dirs::config_dir()?.join("bawkseek"))
+}
+
 fn config_path() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("bawkseek").join("config.json"))
+    Some(data_dir()?.join("config.json"))
 }
 
 impl Config {

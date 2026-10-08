@@ -10,6 +10,8 @@ use std::time::Duration;
 
 use gpui_kit::*;
 
+use crate::chats::Chats;
+
 pub use browse::{Listing, Node};
 pub use group::{FileHit, FolderHit, SearchHits};
 pub use sharing::{overlaps, virtual_roots};
@@ -172,6 +174,10 @@ pub enum Command {
     },
     ClearUploads,
     Browse(String),
+    SendMessage {
+        username: String,
+        text: String,
+    },
     DownloadTree {
         root: String,
         files: Vec<(Wanted, String)>,
@@ -198,7 +204,19 @@ pub enum Event {
         username: String,
         result: Result<Arc<Listing>, String>,
     },
+    Message {
+        username: String,
+        text: String,
+        at: i64,
+        new: bool,
+    },
     Notice(NoticeLevel, String),
+}
+
+pub fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs() as i64)
 }
 
 pub struct SearchTab {
@@ -230,6 +248,8 @@ pub struct Session {
     pub uploads: Arc<Vec<UploadRow>>,
     pub shares: ShareState,
     pub browses: Vec<BrowseTab>,
+    pub chats: Chats,
+    pub viewing_chat: Option<String>,
     _pump: Task<()>,
 }
 
@@ -260,6 +280,8 @@ impl Session {
             uploads: Arc::default(),
             shares: ShareState::default(),
             browses: Vec::new(),
+            chats: Chats::default(),
+            viewing_chat: None,
             _pump: pump,
         }
     }
@@ -290,7 +312,10 @@ impl Session {
                 }
                 self.status = status;
             }
-            Event::LoggedIn(username) => self.username = username.into(),
+            Event::LoggedIn(username) => {
+                self.chats = Chats::load(&username);
+                self.username = username.into();
+            }
             Event::Search { query, hits } => {
                 if let Some(tab) = self.searches.iter_mut().find(|tab| tab.query == query) {
                     tab.hits = hits;
@@ -307,6 +332,22 @@ impl Session {
                     };
                 }
             }
+            Event::Message {
+                username,
+                text,
+                at,
+                new,
+            } => {
+                let read = self.viewing_chat.as_deref() == Some(username.as_str());
+                if new && !read {
+                    cx.emit(Notice(
+                        NoticeLevel::Info,
+                        format!("{username}: {text}").into(),
+                    ));
+                }
+                self.chats.receive(&username, text, at, read);
+                self.chats.save();
+            }
             Event::Notice(level, text) => cx.emit(Notice(level, text.into())),
         }
     }
@@ -317,6 +358,8 @@ impl Session {
         self.uploads = Arc::default();
         self.shares = ShareState::default();
         self.browses.clear();
+        self.chats = Chats::default();
+        self.viewing_chat = None;
     }
 
     pub fn send(&self, command: Command) {
@@ -398,6 +441,27 @@ impl Session {
             self.browses.remove(ix);
             cx.notify();
         }
+    }
+
+    pub fn send_message(&mut self, username: &str, text: String, cx: &mut Context<Self>) {
+        self.chats.sent(username, text.clone(), unix_now());
+        self.chats.save();
+        self.send(Command::SendMessage {
+            username: username.to_string(),
+            text,
+        });
+        cx.notify();
+    }
+
+    /// Tells the session which conversation is on screen, so its messages arrive already read.
+    pub fn view_chat(&mut self, username: Option<String>, cx: &mut Context<Self>) {
+        if let Some(username) = &username
+            && self.chats.mark_read(username)
+        {
+            self.chats.save();
+            cx.notify();
+        }
+        self.viewing_chat = username;
     }
 
     pub fn active_uploads(&self) -> usize {

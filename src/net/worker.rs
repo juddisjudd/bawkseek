@@ -233,6 +233,18 @@ impl Worker {
                 }
             }
             Command::Browse(username) => self.browse(username),
+            Command::SendMessage { username, text } => {
+                let result = match &self.client {
+                    Some(client) => client.send_private_message(&username, &text),
+                    None => Err(SoulseekRs::NotConnected),
+                };
+                if let Err(err) = result {
+                    self.notice(
+                        NoticeLevel::Warning,
+                        format!("could not send to {username}: {}", describe(&err)),
+                    );
+                }
+            }
             Command::DownloadTree { root, files } => self.enqueue_tree(&root, files),
             Command::ClearUploads => {
                 if let Some(client) = &self.client {
@@ -507,6 +519,14 @@ impl Worker {
         self.poll_folders(&client);
         self.poll_downloads(&client);
         self.poll_browses(&client);
+        for message in client.take_private_messages() {
+            self.emit(Event::Message {
+                username: message.username().to_string(),
+                text: message.message().to_string(),
+                at: i64::from(message.timestamp()),
+                new: message.is_new(),
+            });
+        }
         if let Some(rows) = self.uploads.poll(&client) {
             self.emit(Event::Uploads(rows));
         }
