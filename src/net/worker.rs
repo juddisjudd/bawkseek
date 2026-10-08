@@ -13,6 +13,7 @@ use super::browse::Listing;
 use super::group::group;
 use super::sharing::{Scanner, Uploads};
 use super::social::{Buddies, Lookup};
+use super::wishlist::Wishlist;
 use super::{Command, DlState, DownloadRow, Event, NoticeLevel, Status, Wanted, unix_now};
 use crate::format;
 
@@ -87,6 +88,7 @@ struct Worker {
     buddies: Buddies,
     lookup: Lookup,
     away: bool,
+    wishlist: Wishlist,
 }
 
 impl Worker {
@@ -119,6 +121,7 @@ impl Worker {
             buddies: Buddies::default(),
             lookup: Lookup::default(),
             away: false,
+            wishlist: Wishlist::default(),
         }
     }
 
@@ -169,6 +172,17 @@ impl Worker {
             Command::Logout => self.logout(),
             Command::Reconnect => self.reconnect_now(),
             Command::Search(query) => self.search(query),
+            Command::SetWishes(wishes) => {
+                for wish in &wishes {
+                    self.track_search(wish.clone());
+                }
+                self.wishlist.set(wishes);
+            }
+            Command::AddWish(query) => {
+                self.track_search(query.clone());
+                self.wishlist.add(self.client.as_deref(), query);
+            }
+            Command::RemoveWish(query) => self.wishlist.remove(&query),
             Command::ForgetSearch(query) => {
                 self.searches.remove(&query);
                 if let Some(client) = &self.client {
@@ -464,20 +478,19 @@ impl Worker {
             return;
         };
         match client.search(&query, Duration::ZERO) {
-            Ok(_) => {
-                self.searches.insert(
-                    query,
-                    SearchPoll {
-                        responses: 0,
-                        fetched: None,
-                    },
-                );
-            }
+            Ok(_) => self.track_search(query),
             Err(err) => self.notice(
                 NoticeLevel::Warning,
                 format!("search failed: {}", describe(&err)),
             ),
         }
+    }
+
+    fn track_search(&mut self, query: String) {
+        self.searches.entry(query).or_insert(SearchPoll {
+            responses: usize::MAX,
+            fetched: None,
+        });
     }
 
     fn request_folder(&mut self, username: String, folder: String, fallback: Vec<Wanted>) {
@@ -598,6 +611,13 @@ impl Worker {
         if !self.displaced && self.reconnect.is_none() && self.pinged.elapsed() >= PING_EVERY {
             self.pinged = Instant::now();
             let _ = client.ping_server();
+        }
+        if self.wishlist.run_due(&client) {
+            for wish in self.wishlist.wishes() {
+                if let Some(poll) = self.searches.get_mut(wish) {
+                    poll.responses = usize::MAX;
+                }
+            }
         }
         self.poll_searches(&client);
         self.poll_folders(&client);
@@ -735,7 +755,21 @@ impl Worker {
             }
             poll.responses = responses;
             poll.fetched = Some(Instant::now());
-            let hits = group(&client.get_search_results(query));
+            let mut results = client.get_search_results(query);
+            if self.wishlist.is_wish(query) {
+                results = self.wishlist.view(query, results);
+                let fresh = self.wishlist.fresh(query, &results);
+                if fresh > 0 {
+                    let _ = self.events.send(Event::Notice(
+                        NoticeLevel::Info,
+                        format!(
+                            "wishlist: {} for {query}",
+                            format::plural(fresh, "new result", "new results")
+                        ),
+                    ));
+                }
+            }
+            let hits = group(&results);
             let _ = self.events.send(Event::Search {
                 query: query.clone(),
                 hits: Arc::new(hits),

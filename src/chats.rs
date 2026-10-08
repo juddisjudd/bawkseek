@@ -149,21 +149,7 @@ impl Chats {
 }
 
 fn path(owner: &str) -> Option<PathBuf> {
-    let safe: String = owner
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    Some(
-        config::data_dir()?
-            .join("messages")
-            .join(format!("{safe}.json")),
-    )
+    config::account_file("messages", owner)
 }
 
 #[cfg(test)]

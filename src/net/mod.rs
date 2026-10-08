@@ -3,6 +3,7 @@ mod group;
 mod rooms;
 mod sharing;
 mod social;
+mod wishlist;
 mod worker;
 
 use std::path::PathBuf;
@@ -157,6 +158,9 @@ pub enum Command {
     Reconnect,
     Search(String),
     ForgetSearch(String),
+    SetWishes(Vec<String>),
+    AddWish(String),
+    RemoveWish(String),
     Download(Vec<Wanted>),
     DownloadFolder {
         username: String,
@@ -251,6 +255,7 @@ pub fn unix_now() -> i64 {
 pub struct SearchTab {
     pub query: SharedString,
     pub hits: Arc<SearchHits>,
+    pub wish: bool,
 }
 
 pub enum BrowseState {
@@ -353,6 +358,16 @@ impl Session {
             }
             Event::LoggedIn(username) => {
                 self.chats = Chats::load(&username);
+                let wishes = crate::config::load_wishlist(&username);
+                self.searches = wishes
+                    .iter()
+                    .map(|wish| SearchTab {
+                        query: wish.clone().into(),
+                        hits: Arc::default(),
+                        wish: true,
+                    })
+                    .collect();
+                self.send(Command::SetWishes(wishes));
                 self.username = username.into();
             }
             Event::Search { query, hits } => {
@@ -467,6 +482,7 @@ impl Session {
         self.searches.push(SearchTab {
             query: query.to_string().into(),
             hits: Arc::default(),
+            wish: false,
         });
         self.send(Command::Search(query.to_string()));
         cx.notify();
@@ -476,9 +492,38 @@ impl Session {
     pub fn close_search(&mut self, ix: usize, cx: &mut Context<Self>) {
         if ix < self.searches.len() {
             let tab = self.searches.remove(ix);
+            if tab.wish {
+                self.send(Command::RemoveWish(tab.query.to_string()));
+                self.save_wishlist();
+            }
             self.send(Command::ForgetSearch(tab.query.to_string()));
             cx.notify();
         }
+    }
+
+    pub fn toggle_wish(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(tab) = self.searches.get_mut(ix) else {
+            return;
+        };
+        tab.wish = !tab.wish;
+        let (wish, query) = (tab.wish, tab.query.to_string());
+        self.send(if wish {
+            Command::AddWish(query)
+        } else {
+            Command::RemoveWish(query)
+        });
+        self.save_wishlist();
+        cx.notify();
+    }
+
+    fn save_wishlist(&self) {
+        let wishes: Vec<String> = self
+            .searches
+            .iter()
+            .filter(|tab| tab.wish)
+            .map(|tab| tab.query.to_string())
+            .collect();
+        crate::config::save_wishlist(&self.username, &wishes);
     }
 
     /// Returns the tab index for `username`, asking for their shares unless a listing is open or on its way.

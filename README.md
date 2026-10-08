@@ -2,12 +2,12 @@
 
 A Soulseek desktop client for Windows, built in Rust with [GPUI Kit](https://gpui-kit.com). It looks and feels like [bawkterm](https://bawkterm.com).
 
-> Status: early. Search, downloads, sharing, browsing, messages, chat rooms and buddies work. Wishlist and recommendations come next.
+> Status: early. Search, downloads, sharing, browsing, messages, chat rooms, buddies and the wishlist work. Recommendations come next.
 
 ## What works
 
 - **Log in**: any free name and a password. The server makes the account on first login. "Remember me" keeps the password in Windows Credential Manager.
-- **Search**: results arrive live and group by folder, with the format and quality of each folder (flac 24/96, mp3 320). Sort by speed, folder, user, file count or size. Filter by text (`-word` excludes), or show free slots only. Each search stays open in its own tab.
+- **Search**: results arrive live and group by folder, with the format and quality of each folder (flac 24/96, mp3 320). Sort by speed, folder, user, file count or size. Filter by text (`-word` excludes), or show free slots only. Each search stays open in its own tab. Press "keep searching" to put a search on your wishlist: it reruns on the server's schedule, keeps every earlier result, and tells you when new ones turn up.
 - **Download**: a single file, or a whole folder. A folder download asks the user for the complete folder listing and keeps subfolders such as `CD1` or `Scans`.
 - **Browse**: open any user's shared folders as a tree, from the browse page or by clicking a username in search, transfers or uploads. Filter by folder or file name, download single files or a whole folder with its subfolders. Folders with more than 200 files ask before downloading.
 - **Messages**: private conversations with any user, even offline ones. Unread counts in the sidebar, a toast for new messages, and logs saved on this computer per account (`%APPDATA%\bawkseek\messages`).
@@ -20,7 +20,7 @@ A Soulseek desktop client for Windows, built in Rust with [GPUI Kit](https://gpu
 - **Reconnects**: a dropped server connection reconnects by itself. Queued downloads resume when their peer is back.
 - **Settings**: download folder, listening port, dark or light theme.
 
-Not built yet: wishlist, interests and recommendations, UPnP port mapping, an upload speed limit, banning users.
+Not built yet: interests and recommendations, UPnP port mapping, an upload speed limit, banning users.
 
 ## Build
 

@@ -48,6 +48,40 @@ pub fn data_dir() -> Option<PathBuf> {
     Some(dirs::config_dir()?.join("bawkseek"))
 }
 
+/// A per-account JSON file under the data folder, with the username made safe as a file name.
+pub fn account_file(kind: &str, owner: &str) -> Option<PathBuf> {
+    let safe: String = owner
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    Some(data_dir()?.join(kind).join(format!("{safe}.json")))
+}
+
+pub fn load_wishlist(owner: &str) -> Vec<String> {
+    account_file("wishlist", owner)
+        .and_then(|path| fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_wishlist(owner: &str, wishes: &[String]) {
+    let Some(path) = account_file("wishlist", owner) else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    if let Ok(json) = serde_json::to_vec_pretty(wishes) {
+        let _ = fs::write(path, json);
+    }
+}
+
 fn config_path() -> Option<PathBuf> {
     Some(data_dir()?.join("config.json"))
 }

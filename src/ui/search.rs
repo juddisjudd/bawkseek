@@ -313,6 +313,9 @@ impl SearchView {
                     .cursor_pointer()
                     .hover(|style| style.text_color(p.text_strong))
                     .on_click(cx.listener(move |this, _, _, cx| this.select(ix, cx)))
+                    .when(tab.wish, |this| {
+                        this.child(Icon::new(IconName::Star).size(px(12.)).text_color(p.yolk))
+                    })
                     .child(kit::truncate(tab.query.clone()).max_w(px(220.)))
                     .child(
                         div()
@@ -682,6 +685,12 @@ impl Render for SearchView {
             n => format::plural(n, "open search", "open searches"),
         };
 
+        let wish = self
+            .session
+            .read(cx)
+            .searches
+            .get(self.active)
+            .is_some_and(|tab| tab.wish);
         let body = match &self.layout {
             None => kit::empty_state(
                 IconName::Search,
@@ -748,6 +757,14 @@ impl Render for SearchView {
                                     |this, _, _, cx| {
                                         this.free_only = !this.free_only;
                                         cx.notify();
+                                    },
+                                )),
+                            )
+                            .child(
+                                kit::chip("wishlist", "keep searching", wish, &p).on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        let ix = this.active;
+                                        this.session.update(cx, |session, cx| session.toggle_wish(ix, cx));
                                     },
                                 )),
                             ),
