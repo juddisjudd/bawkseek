@@ -21,7 +21,7 @@ use crate::chats::Chats;
 
 pub use browse::{Listing, Node};
 pub use discover::Discovery;
-pub use filter::{Filter, Quality};
+pub use filter::{Filter, Quality, toggle_format};
 pub use group::{FileHit, FolderHit, SearchHits};
 pub use portmap::PortMap;
 pub use rooms::{RoomLine, Rooms};

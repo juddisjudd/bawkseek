@@ -51,7 +51,7 @@ impl Cmp {
     }
 }
 
-/// The search filter box and its chips: words match folders, while formats and quality pick files.
+/// The search filter box and its quality pick: words match folders, while formats and quality pick files.
 #[derive(Debug, Default, PartialEq)]
 pub struct Filter {
     words: Vec<String>,
@@ -62,9 +62,8 @@ pub struct Filter {
 }
 
 impl Filter {
-    pub fn new(text: &str, formats: &[String], quality: Quality) -> Self {
+    pub fn new(text: &str, quality: Quality) -> Self {
         let mut filter = Filter {
-            formats: formats.to_vec(),
             quality,
             ..Filter::default()
         };
@@ -98,6 +97,10 @@ impl Filter {
             }
         }
         filter
+    }
+
+    pub fn formats(&self) -> &[String] {
+        &self.formats
     }
 
     pub fn is_empty(&self) -> bool {
@@ -158,6 +161,18 @@ impl Filter {
             .collect();
         (!files.is_empty()).then_some(files)
     }
+}
+
+/// The filter text with `.ext` added, or removed when it is already there.
+pub fn toggle_format(text: &str, ext: &str) -> String {
+    let token = format!(".{ext}");
+    let mut tokens: Vec<&str> = text.split_whitespace().collect();
+    let before = tokens.len();
+    tokens.retain(|word| !word.eq_ignore_ascii_case(&token));
+    if tokens.len() == before {
+        tokens.push(&token);
+    }
+    tokens.join(" ")
 }
 
 fn comparison(token: &str) -> Option<(Cmp, &str)> {
@@ -228,7 +243,7 @@ mod tests {
 
     #[test]
     fn reads_formats_and_bitrates_from_text() {
-        let filter = Filter::new(".FLAC > 128 <=320kbps -live ≥192 album", &[], Quality::Any);
+        let filter = Filter::new(".FLAC > 128 <=320kbps -live ≥192 album", Quality::Any);
         assert_eq!(filter.formats, ["flac"]);
         assert_eq!(
             filter.bitrates,
@@ -239,8 +254,15 @@ mod tests {
     }
 
     #[test]
+    fn format_chips_edit_the_text() {
+        assert_eq!(toggle_format("live  > 128", "flac"), "live > 128 .flac");
+        assert_eq!(toggle_format("live .FLAC .mp3", "flac"), "live .mp3");
+        assert_eq!(toggle_format("", "mp3"), ".mp3");
+    }
+
+    #[test]
     fn a_lone_sign_stays_a_word() {
-        let filter = Filter::new("> live", &[], Quality::Any);
+        let filter = Filter::new("> live", Quality::Any);
         assert_eq!(filter.words, [">", "live"]);
         assert!(filter.bitrates.is_empty());
     }
@@ -251,11 +273,11 @@ mod tests {
         let low = hit("b.mp3", Some(128), None, None);
         let flac = hit("c.flac", None, Some(16), Some(44_100));
         let cover = hit("cover.jpg", None, None, None);
-        let over = Filter::new(">128", &[], Quality::Any);
+        let over = Filter::new(">128", Quality::Any);
         assert!(over.file(&mp3) && !over.file(&low) && over.file(&flac) && !over.file(&cover));
-        let under = Filter::new("<=320", &[], Quality::Any);
+        let under = Filter::new("<=320", Quality::Any);
         assert!(under.file(&mp3) && under.file(&low) && !under.file(&flac));
-        let exact = Filter::new("=320", &[], Quality::Any);
+        let exact = Filter::new("=320", Quality::Any);
         assert!(exact.file(&mp3) && !exact.file(&low));
     }
 
@@ -264,11 +286,11 @@ mod tests {
         let mp3 = hit("a.mp3", Some(320), None, None);
         let cd = hit("b.flac", None, Some(16), Some(44_100));
         let hires = hit("c.flac", None, Some(24), Some(96_000));
-        let at_least = Filter::new("", &[], Quality::AtLeast(256));
+        let at_least = Filter::new("", Quality::AtLeast(256));
         assert!(at_least.file(&mp3) && at_least.file(&cd));
-        let lossless = Filter::new("", &[], Quality::Lossless);
+        let lossless = Filter::new("", Quality::Lossless);
         assert!(!lossless.file(&mp3) && lossless.file(&cd) && lossless.file(&hires));
-        let hi = Filter::new("", &[], Quality::HiRes);
+        let hi = Filter::new("", Quality::HiRes);
         assert!(!hi.file(&cd) && hi.file(&hires));
     }
 
@@ -279,19 +301,18 @@ mod tests {
             hit("01.mp3", Some(320), None, None),
             hit("cover.jpg", None, None, None),
         ]);
-        let chips = Filter::new("", &["mp3".into()], Quality::Any);
-        assert_eq!(chips.folder(&album), Some(vec![1]));
-        assert_eq!(Filter::new(".wav", &[], Quality::Any).folder(&album), None);
         assert_eq!(
-            Filter::new("ann", &[], Quality::Any).folder(&album),
+            Filter::new(".mp3", Quality::Any).folder(&album),
+            Some(vec![1])
+        );
+        assert_eq!(Filter::new(".wav", Quality::Any).folder(&album), None);
+        assert_eq!(
+            Filter::new("ann", Quality::Any).folder(&album),
             Some(vec![0, 1, 2])
         );
+        assert_eq!(Filter::new("-cover", Quality::Any).folder(&album), None);
         assert_eq!(
-            Filter::new("-cover", &[], Quality::Any).folder(&album),
-            None
-        );
-        assert_eq!(
-            Filter::new("", &[], Quality::Any).folder(&album),
+            Filter::new("", Quality::Any).folder(&album),
             Some(vec![0, 1, 2])
         );
     }

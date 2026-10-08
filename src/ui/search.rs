@@ -15,6 +15,7 @@ use super::{UserAction, kit};
 use crate::format;
 use crate::net::{
     Command, DlState, Filter, FolderHit, Quality, Scope, SearchHits, Session, Wanted, parse_scope,
+    toggle_format,
 };
 use crate::theme::{Palette, palette};
 
@@ -58,7 +59,6 @@ struct LayoutKey {
     query: SharedString,
     hits: usize,
     filter: String,
-    formats: Vec<String>,
     quality: Quality,
     free_only: bool,
     sort: Sort,
@@ -78,7 +78,6 @@ pub struct SearchView {
     query: Entity<InputState>,
     filter: Entity<InputState>,
     active: usize,
-    formats: Vec<String>,
     quality: Quality,
     free_only: bool,
     sort: Sort,
@@ -116,7 +115,6 @@ impl SearchView {
             query,
             filter,
             active: 0,
-            formats: Vec::new(),
             quality: Quality::Any,
             free_only: false,
             sort: Sort::Speed,
@@ -226,7 +224,6 @@ impl SearchView {
             query: tab.query.clone(),
             hits: Arc::as_ptr(&tab.hits) as usize,
             filter: filter.clone(),
-            formats: self.formats.clone(),
             quality: self.quality,
             free_only: self.free_only,
             sort: self.sort,
@@ -237,7 +234,7 @@ impl SearchView {
         }
 
         let hits = tab.hits.clone();
-        let filter = Filter::new(&filter, &self.formats, self.quality);
+        let filter = Filter::new(&filter, self.quality);
         let picks: Vec<Option<Vec<usize>>> = hits
             .folders
             .iter()
@@ -381,12 +378,10 @@ impl SearchView {
             }))
     }
 
-    fn toggle_format(&mut self, ext: &str, cx: &mut Context<Self>) {
-        if let Some(ix) = self.formats.iter().position(|picked| picked == ext) {
-            self.formats.remove(ix);
-        } else {
-            self.formats.push(ext.to_string());
-        }
+    fn toggle_format(&mut self, ext: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let text = toggle_format(&self.filter.read(cx).value(), ext);
+        self.filter
+            .update(cx, |state, cx| state.set_value(text, window, cx));
         cx.notify();
     }
 
@@ -397,7 +392,9 @@ impl SearchView {
             .take(6)
             .map(|(ext, _)| ext.clone())
             .collect();
-        for ext in &self.formats {
+        let typed = Filter::new(&self.filter.read(cx).value(), Quality::Any);
+        let picked = typed.formats();
+        for ext in picked {
             if !shown.contains(ext) {
                 shown.push(ext.clone());
             }
@@ -409,9 +406,13 @@ impl SearchView {
             .items_center()
             .gap_2()
             .children(shown.into_iter().map(|ext| {
-                let active = self.formats.contains(&ext);
+                let active = picked.contains(&ext);
                 kit::format_chip(SharedString::from(format!("format-{ext}")), &ext, active, p)
-                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_format(&ext, cx)))
+                    .on_click(
+                        cx.listener(move |this, _, window, cx| {
+                            this.toggle_format(&ext, window, cx)
+                        }),
+                    )
             }))
             .child(
                 kit::button("quality", cx)
