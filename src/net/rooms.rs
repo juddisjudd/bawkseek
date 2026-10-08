@@ -21,12 +21,22 @@ pub struct Room {
     pub private: bool,
 }
 
-/// Joined rooms in join order, plus the server's public room list.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FeedLine {
+    pub at: i64,
+    pub room: String,
+    pub username: String,
+    pub text: String,
+}
+
+/// Joined rooms in join order, the server's public room list, and the public feed.
 #[derive(Debug, Default)]
 pub struct Rooms {
     pub joined: Vec<Room>,
     pub list: Vec<RoomInfo>,
     pub viewing: Option<String>,
+    pub feed: Vec<FeedLine>,
+    pub feed_on: bool,
     private: HashSet<String>,
 }
 
@@ -132,6 +142,20 @@ impl Rooms {
                     joined.private = true;
                 }
                 self.private.insert(room);
+            }
+            RoomEvent::GlobalMessage {
+                room,
+                username,
+                message,
+            } => {
+                self.feed.push(FeedLine {
+                    at,
+                    room,
+                    username,
+                    text: message,
+                });
+                let excess = self.feed.len().saturating_sub(MAX_LINES);
+                self.feed.drain(..excess);
             }
             RoomEvent::CantCreate { room } => {
                 return Some(format!(

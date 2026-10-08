@@ -13,6 +13,7 @@ use super::browse::Listing;
 use super::discover::Discover;
 use super::group::group;
 use super::portmap::{PortMap, PortMapper};
+use super::scope::{Scope, parse_scope};
 use super::sharing::{Scanner, Uploads};
 use super::social::{Buddies, Lookup};
 use super::wishlist::Wishlist;
@@ -47,7 +48,9 @@ struct Credentials {
     listen_port: u16,
 }
 
+/// One open search tab; `query` is the text the library files results under, without any `@user` or `#room` part.
 struct SearchPoll {
+    query: String,
     responses: usize,
     fetched: Option<Instant>,
 }
@@ -99,6 +102,7 @@ struct Worker {
     portmap: Option<PortMapper>,
     download_limit: u64,
     privileges_until: Option<Instant>,
+    public_feed: bool,
 }
 
 impl Worker {
@@ -137,6 +141,7 @@ impl Worker {
             portmap: None,
             download_limit: 0,
             privileges_until: None,
+            public_feed: false,
         }
     }
 
@@ -225,19 +230,20 @@ impl Worker {
             Command::Search(query) => self.search(query),
             Command::SetWishes(wishes) => {
                 for wish in &wishes {
-                    self.track_search(wish.clone());
+                    self.track_search(wish.clone(), wish.clone());
                 }
                 self.wishlist.set(wishes);
             }
             Command::AddWish(query) => {
-                self.track_search(query.clone());
+                self.track_search(query.clone(), query.clone());
                 self.wishlist.add(self.client.as_deref(), query);
             }
             Command::RemoveWish(query) => self.wishlist.remove(&query),
-            Command::ForgetSearch(query) => {
-                self.searches.remove(&query);
-                if let Some(client) = &self.client {
-                    let _ = client.forget_search(&query);
+            Command::ForgetSearch(tab) => {
+                if let Some(poll) = self.searches.remove(&tab)
+                    && let Some(client) = &self.client
+                {
+                    let _ = client.forget_search(&poll.query);
                 }
             }
             Command::Download(files) => {
@@ -369,6 +375,33 @@ impl Worker {
                     );
                 }
             }
+            Command::PublicFeed(on) => {
+                self.public_feed = on;
+                if let Some(client) = &self.client {
+                    let _ = if on {
+                        client.join_global_room()
+                    } else {
+                        client.leave_global_room()
+                    };
+                }
+            }
+            Command::GivePrivileges { username, days } => {
+                if let Some(client) = &self.client {
+                    match client.give_privileges(&username, days) {
+                        Ok(()) => self.notice(
+                            NoticeLevel::Info,
+                            format!(
+                                "asked the server to give {username} {}",
+                                format::plural(days as usize, "day", "days")
+                            ),
+                        ),
+                        Err(err) => self.notice(
+                            NoticeLevel::Warning,
+                            format!("could not give privileges: {}", describe(&err)),
+                        ),
+                    }
+                }
+            }
             Command::SetTicker { room, ticker } => {
                 if let Some(client) = &self.client {
                     let _ = client.set_room_ticker(&room, &ticker);
@@ -462,6 +495,9 @@ impl Worker {
         self.requeue_peers(client);
         self.rescan();
         self.buddies.watch_all(client);
+        if self.public_feed {
+            let _ = client.join_global_room();
+        }
         if self.away {
             let _ = client.set_away(true);
         }
@@ -543,6 +579,7 @@ impl Worker {
         self.browses.clear();
         self.lookup = Lookup::default();
         self.rooms.clear();
+        self.public_feed = false;
         self.client = None;
     }
 
@@ -556,12 +593,18 @@ impl Worker {
         self.emit(Event::Status(Status::Offline));
     }
 
-    fn search(&mut self, query: String) {
+    fn search(&mut self, tab: String) {
         let Some(client) = &self.client else {
             return;
         };
-        match client.search(&query, Duration::ZERO) {
-            Ok(_) => self.track_search(query),
+        let (scope, query) = parse_scope(&tab);
+        let result = match &scope {
+            Scope::Everyone => client.search(&query, Duration::ZERO).map(|_| ()),
+            Scope::User(user) => client.search_user(user, &query),
+            Scope::Room(room) => client.search_room(room, &query),
+        };
+        match result {
+            Ok(()) => self.track_search(tab, query),
             Err(err) => self.notice(
                 NoticeLevel::Warning,
                 format!("search failed: {}", describe(&err)),
@@ -569,8 +612,9 @@ impl Worker {
         }
     }
 
-    fn track_search(&mut self, query: String) {
-        self.searches.entry(query).or_insert(SearchPoll {
+    fn track_search(&mut self, tab: String, query: String) {
+        self.searches.entry(tab).or_insert(SearchPoll {
+            query,
             responses: usize::MAX,
             fetched: None,
         });
@@ -839,10 +883,11 @@ impl Worker {
     }
 
     fn poll_searches(&mut self, client: &Client) {
-        for (query, poll) in &mut self.searches {
+        for (tab, poll) in &mut self.searches {
             if poll.fetched.is_some_and(|at| at.elapsed() < SEARCH_REFRESH) {
                 continue;
             }
+            let query = &poll.query;
             let responses = client.get_search_results_count(query);
             if responses == poll.responses {
                 continue;
@@ -865,7 +910,7 @@ impl Worker {
             }
             let hits = group(&results);
             let _ = self.events.send(Event::Search {
-                query: query.clone(),
+                query: tab.clone(),
                 hits: Arc::new(hits),
             });
         }

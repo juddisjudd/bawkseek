@@ -25,6 +25,9 @@ pub struct RoomsView {
     ticker: Entity<InputState>,
     private: bool,
     active: Option<String>,
+    feed: bool,
+    feed_log: ScrollHandle,
+    feed_shown: usize,
     visible: bool,
     log: ScrollHandle,
     shown: (Option<String>, usize),
@@ -84,6 +87,9 @@ impl RoomsView {
             ticker,
             private: false,
             active: None,
+            feed: false,
+            feed_log: ScrollHandle::new(),
+            feed_shown: 0,
             visible: false,
             log: ScrollHandle::new(),
             shown: (None, 0),
@@ -121,6 +127,7 @@ impl RoomsView {
             });
         }
         self.active = room;
+        self.feed = false;
         self.shown = (None, 0);
         self.member_scroll.scroll_to_item(0, ScrollStrategy::Top);
         self.report_viewing(cx);
@@ -349,10 +356,19 @@ impl RoomsView {
                 tab(
                     "all-rooms".into(),
                     "all rooms".into(),
-                    self.active.is_none(),
+                    self.active.is_none() && !self.feed,
                     0,
                 )
                 .on_click(cx.listener(|this, _, window, cx| this.select(None, window, cx))),
+            )
+            .child(
+                tab("public-feed".into(), "public feed".into(), self.feed, 0).on_click(
+                    cx.listener(|this, _, window, cx| {
+                        this.select(None, window, cx);
+                        this.feed = true;
+                        this.feed_shown = 0;
+                    }),
+                ),
             )
             .children(
                 pending
@@ -644,6 +660,112 @@ impl RoomsView {
     }
 }
 
+impl RoomsView {
+    fn render_feed(&mut self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let rooms = &self.session.read(cx).rooms;
+        let (on, lines) = (rooms.feed_on, rooms.feed.clone());
+        if self.feed_shown != lines.len() {
+            self.feed_shown = lines.len();
+            self.feed_log.scroll_to_bottom();
+        }
+        let mut log = div()
+            .id("feed-log")
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .py_3()
+            .track_scroll(&self.feed_log)
+            .overflow_y_scroll();
+        for (ix, line) in lines.iter().enumerate() {
+            log = log.child(
+                div()
+                    .flex()
+                    .gap_3()
+                    .child(
+                        div()
+                            .w(px(44.))
+                            .flex_none()
+                            .text_color(p.text_weaker)
+                            .child(local(line.at).format("%H:%M").to_string()),
+                    )
+                    .child(
+                        kit::truncate(format!("#{}", line.room))
+                            .w(px(140.))
+                            .flex_none()
+                            .text_color(p.text_weak),
+                    )
+                    .child(div().w(px(150.)).flex_none().flex().child(kit::user_cell(
+                        ("feed-user", ix),
+                        &line.username,
+                        p.text_strong,
+                        p,
+                        cx,
+                    )))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_color(p.text)
+                            .child(line.text.clone()),
+                    ),
+            );
+        }
+        if lines.is_empty() {
+            log = log.child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(p.text_weak)
+                    .child(if on {
+                        "waiting for the first line…"
+                    } else {
+                        "turn the feed on to see lines from every public room as they are said."
+                    }),
+            );
+        }
+        div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        kit::chip(
+                            "feed-on",
+                            if on {
+                                "following"
+                            } else {
+                                "follow the public feed"
+                            },
+                            on,
+                            p,
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.session
+                                .update(cx, |session, cx| session.set_public_feed(!on, cx));
+                        })),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(p.text_weak)
+                            .child("every line said in any public room. it moves fast."),
+                    ),
+            )
+            .child(log)
+            .into_any_element()
+    }
+}
+
 fn local(at: i64) -> DateTime<Local> {
     DateTime::from_timestamp(at, 0)
         .unwrap_or_default()
@@ -701,6 +823,7 @@ impl Render for RoomsView {
             );
 
         let body = match self.active.clone() {
+            None if self.feed => self.render_feed(&p, cx),
             None => self.render_room_list(&p, cx),
             Some(room) => self.render_room(room, &p, cx),
         };

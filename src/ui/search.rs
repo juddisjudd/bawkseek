@@ -13,7 +13,7 @@ use gpui_kit::*;
 
 use super::{UserAction, kit};
 use crate::format;
-use crate::net::{Command, DlState, FolderHit, SearchHits, Session, Wanted};
+use crate::net::{Command, DlState, FolderHit, Scope, SearchHits, Session, Wanted, parse_scope};
 use crate::theme::{Palette, palette};
 
 const FOLDER_ROW: f32 = 52.;
@@ -84,7 +84,10 @@ pub struct SearchView {
 
 impl SearchView {
     pub fn new(session: Entity<Session>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let query = cx.new(|cx| InputState::new(window, cx).placeholder("artist, album or track"));
+        let query = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("artist, album or track · @user or #room to narrow")
+        });
         let filter = cx.new(|cx| {
             InputState::new(window, cx).placeholder("filter by user, folder, file or format")
         });
@@ -118,6 +121,19 @@ impl SearchView {
 
     pub fn focus(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.query.update(cx, |state, cx| state.focus(window, cx));
+    }
+
+    /// Starts a search limited to one user, leaving the cursor after the name.
+    pub fn prefill_user(&self, username: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let name = if username.contains(char::is_whitespace) {
+            format!("\"{username}\"")
+        } else {
+            username.to_string()
+        };
+        self.query.update(cx, |state, cx| {
+            state.set_value(format!("@{name} "), window, cx);
+            state.focus(window, cx);
+        });
     }
 
     fn run(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -693,7 +709,8 @@ impl Render for SearchView {
             .read(cx)
             .searches
             .get(self.active)
-            .is_some_and(|tab| tab.wish);
+            .map(|tab| (tab.wish, parse_scope(&tab.query).0 == Scope::Everyone));
+        let (wish, can_wish) = wish.unwrap_or((false, false));
         let body = match &self.layout {
             None => kit::empty_state(
                 IconName::Search,
@@ -763,14 +780,14 @@ impl Render for SearchView {
                                     },
                                 )),
                             )
-                            .child(
-                                kit::chip("wishlist", "keep searching", wish, &p).on_click(cx.listener(
-                                    |this, _, _, cx| {
+                            .when(can_wish, |this| {
+                                this.child(kit::chip("wishlist", "keep searching", wish, &p).on_click(
+                                    cx.listener(|this, _, _, cx| {
                                         let ix = this.active;
                                         this.session.update(cx, |session, cx| session.toggle_wish(ix, cx));
-                                    },
-                                )),
-                            ),
+                                    }),
+                                ))
+                            }),
                     )
                     .child(self.render_columns(&p, cx))
                     .child(list)

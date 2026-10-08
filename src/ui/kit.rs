@@ -173,6 +173,11 @@ pub fn user_menu<V: EventEmitter<UserAction>>(
             IconName::MessagesSquare,
             UserAction::Message(name.clone()),
         ),
+        (
+            "search their files",
+            IconName::Search,
+            UserAction::SearchUser(name.clone()),
+        ),
         ("user info", IconName::Info, UserAction::Info(name.clone())),
         if buddy {
             (

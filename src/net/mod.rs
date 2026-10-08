@@ -3,6 +3,7 @@ mod discover;
 mod group;
 mod portmap;
 mod rooms;
+mod scope;
 mod sharing;
 mod social;
 mod wishlist;
@@ -22,6 +23,7 @@ pub use discover::Discovery;
 pub use group::{FileHit, FolderHit, SearchHits};
 pub use portmap::PortMap;
 pub use rooms::{RoomLine, Rooms};
+pub use scope::{Scope, parse_scope};
 pub use sharing::{overlaps, virtual_roots};
 pub use social::{Presence, UserCard};
 
@@ -225,6 +227,11 @@ pub enum Command {
     SetTicker {
         room: String,
         ticker: String,
+    },
+    PublicFeed(bool),
+    GivePrivileges {
+        username: String,
+        days: u32,
     },
     DownloadTree {
         root: String,
@@ -442,7 +449,8 @@ impl Session {
             }
             Event::Rooms { at, events } => {
                 for event in events {
-                    if let soulseek_rs::RoomEvent::Message { username, .. } = &event
+                    if let soulseek_rs::RoomEvent::Message { username, .. }
+                    | soulseek_rs::RoomEvent::GlobalMessage { username, .. } = &event
                         && self.ignored.contains(username)
                     {
                         continue;
@@ -643,6 +651,12 @@ impl Session {
             ..Default::default()
         });
         self.send(Command::LookUp(username.to_string()));
+        cx.notify();
+    }
+
+    pub fn set_public_feed(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.rooms.feed_on = on;
+        self.send(Command::PublicFeed(on));
         cx.notify();
     }
 

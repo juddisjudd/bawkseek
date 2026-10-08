@@ -39,6 +39,7 @@ use users::UsersView;
 pub enum UserAction {
     Browse(String),
     Message(String),
+    SearchUser(String),
     Info(String),
     SetBuddy(String, bool),
     SetIgnored(String, bool),
@@ -350,6 +351,11 @@ impl Workspace {
                 self.messages
                     .update(cx, |messages, cx| messages.open(username, window, cx));
                 self.select(Page::Messages, window, cx);
+            }
+            UserAction::SearchUser(username) => {
+                self.select(Page::Search, window, cx);
+                self.search
+                    .update(cx, |search, cx| search.prefill_user(username, window, cx));
             }
             UserAction::Info(username) => {
                 self.session

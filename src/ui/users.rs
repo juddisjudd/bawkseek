@@ -2,18 +2,19 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::scroll::ScrollableElement;
-use gpui_kit::component::{Icon, Sizable};
+use gpui_kit::component::{Icon, Sizable, WindowExt};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{Social, UserAction, kit};
 use crate::format;
-use crate::net::{Presence, Session, UserCard};
+use crate::net::{Command, Presence, Session, UserCard};
 use crate::theme::{Palette, palette};
 
 pub struct UsersView {
     session: Entity<Session>,
     target: Entity<InputState>,
+    days: Entity<InputState>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -34,9 +35,11 @@ impl UsersView {
             ),
             cx.observe(&session, |_, _, cx| cx.notify()),
         ];
+        let days = cx.new(|cx| InputState::new(window, cx).placeholder("days"));
         Self {
             session,
             target,
+            days,
             _subscriptions: subscriptions,
         }
     }
@@ -172,6 +175,57 @@ impl UsersView {
         list
     }
 
+    fn give_privileges(&self, username: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.days
+            .update(cx, |state, cx| state.set_value("1", window, cx));
+        let (days, session) = (self.days.clone(), self.session.clone());
+        let title: SharedString = format!("give {username} privileges").into();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let (days, session, username) = (days.clone(), session.clone(), username.clone());
+            dialog
+                .title(title.clone())
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .child("the days come out of your own privileges.")
+                        .child(Input::new(&days)),
+                )
+                .footer(
+                    div()
+                        .flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            Button::new("cancel-give")
+                                .outline()
+                                .label("cancel")
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("confirm-give")
+                                .primary()
+                                .label("give")
+                                .on_click(move |_, window, cx| {
+                                    let Ok(days) = days.read(cx).value().trim().parse::<u32>()
+                                    else {
+                                        return;
+                                    };
+                                    if days == 0 {
+                                        return;
+                                    }
+                                    session.read(cx).send(Command::GivePrivileges {
+                                        username: username.clone(),
+                                        days,
+                                    });
+                                    window.close_dialog(cx);
+                                }),
+                        ),
+                )
+        });
+    }
+
     fn render_card(
         &self,
         card: &UserCard,
@@ -185,6 +239,11 @@ impl UsersView {
             )
         });
         let username = card.username.clone();
+        let can_give = self
+            .session
+            .read(cx)
+            .privileges
+            .is_some_and(|seconds| seconds > 0);
         let row = |label: &'static str, value: String| {
             div()
                 .flex()
@@ -298,6 +357,19 @@ impl UsersView {
                         action("card-ignore", "stop ignoring", IconName::Eye, UserAction::SetIgnored(username.clone(), false))
                     } else {
                         action("card-ignore", "ignore", IconName::EyeOff, UserAction::SetIgnored(username.clone(), true))
+                    })
+                    .when(can_give, |this| {
+                        let username = username.clone();
+                        this.child(
+                            Button::new("card-give")
+                                .outline()
+                                .small()
+                                .icon(Icon::new(IconName::StarFill))
+                                .label("give privileges…")
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.give_privileges(username.clone(), window, cx)
+                                })),
+                        )
                     }),
             )
             .child(
