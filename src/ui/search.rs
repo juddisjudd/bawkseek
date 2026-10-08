@@ -407,7 +407,7 @@ fn matches(folder: &FolderHit, terms: &[&str]) -> bool {
         return true;
     }
     let haystack =
-        format!("{} {} {}", folder.username, folder.folder, folder.summary).to_lowercase();
+        format!("{} {} {}", folder.username, folder.folder, folder.summary()).to_lowercase();
     terms.iter().all(|term| {
         if let Some(excluded) = term.strip_prefix('-').filter(|rest| !rest.is_empty()) {
             !haystack.contains(excluded)
@@ -479,8 +479,8 @@ fn folder_row(
                         .items_center()
                         .gap_2()
                         .child(kit::truncate(display_name(hit)).text_color(p.text_strong))
-                        .when(!hit.summary.is_empty(), |this| {
-                            this.child(kit::tag(hit.summary.clone(), p))
+                        .when(!hit.format.is_empty(), |this| {
+                            this.child(kit::format_tag(&hit.format, &hit.quality, p))
                         }),
                 )
                 .child(
@@ -582,15 +582,7 @@ fn file_row(
         .bg(p.bg_weak)
         .hover(|style| style.bg(p.bg_hover));
     kit::box_edges(row, false, last, p)
-        .child(
-            Icon::new(if is_audio(&entry.ext) {
-                IconName::FileMusic
-            } else {
-                IconName::File
-            })
-            .size(px(13.))
-            .text_color(p.text_weaker),
-        )
+        .child(kit::file_icon(&entry.ext, p))
         .child(
             kit::truncate(entry.name.clone())
                 .flex_1()
@@ -604,7 +596,11 @@ fn file_row(
                 .justify_end()
                 .gap_3()
                 .text_color(p.text_weak)
-                .child(entry.quality())
+                .child(
+                    div()
+                        .text_color(p.format(&entry.ext))
+                        .child(entry.quality()),
+                )
                 .child(entry.duration.map(format::duration).unwrap_or_default()),
         )
         .child(div().w(px(FILES_W)).flex_none())
@@ -637,24 +633,6 @@ fn file_row(
                 .on_click(cx.listener(move |this, _, _, cx| this.download_file(folder, file, cx))),
             ),
         )
-}
-
-fn is_audio(ext: &str) -> bool {
-    matches!(
-        ext,
-        "flac"
-            | "mp3"
-            | "ogg"
-            | "opus"
-            | "m4a"
-            | "aac"
-            | "wav"
-            | "alac"
-            | "ape"
-            | "aiff"
-            | "wv"
-            | "wma"
-    )
 }
 
 impl EventEmitter<UserAction> for SearchView {}

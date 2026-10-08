@@ -663,11 +663,7 @@ fn file_row(
         .px(px(10.))
         .rounded(px(4.))
         .hover(|style| style.bg(p.bg_weak))
-        .child(
-            Icon::new(IconName::FileMusic)
-                .size(px(13.))
-                .text_color(p.text_weaker),
-        )
+        .child(kit::file_icon(&file.ext, p))
         .child(kit::truncate(file.name.clone()).flex_1().text_color(p.text))
         .child(
             div()
@@ -675,7 +671,7 @@ fn file_row(
                 .flex()
                 .gap_3()
                 .text_color(p.text_weak)
-                .child(file.quality())
+                .child(div().text_color(p.format(&file.ext)).child(file.quality()))
                 .child(file.duration.map(format::duration).unwrap_or_default()),
         )
         .child(

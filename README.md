@@ -7,7 +7,7 @@ A Soulseek desktop client for Windows, built in Rust with [GPUI Kit](https://gpu
 ## What works
 
 - **Log in**: any free name and a password. The server makes the account on first login. "Remember me" keeps the password in Windows Credential Manager.
-- **Search**: results arrive live and group by folder, with the format and quality of each folder (flac 24/96, mp3 320). Sort by speed, folder, user, file count or size. Filter by text (`-word` excludes), or show free slots only. Start a search with `@user` to search one user's shares or `#room` to search a room (quote names with spaces: `#"The Lobby" flac`). Each search stays open in its own tab. Press "keep searching" to put a search on your wishlist: it reruns on the server's schedule, keeps every earlier result, and tells you when new ones turn up.
+- **Search**: results arrive live and group by folder, with the format and quality of each folder (flac 24/96, mp3 320). Each format has its own color: cool for lossless, warm for lossy. Sort by speed, folder, user, file count or size. Filter by text (`-word` excludes), or show free slots only. Start a search with `@user` to search one user's shares or `#room` to search a room (quote names with spaces: `#"The Lobby" flac`). Each search stays open in its own tab. Press "keep searching" to put a search on your wishlist: it reruns on the server's schedule, keeps every earlier result, and tells you when new ones turn up.
 - **Download**: a single file, or a whole folder. A folder download asks the user for the complete folder listing and keeps subfolders such as `CD1` or `Scans`.
 - **Browse**: open any user's shared folders as a tree, from the browse page or by clicking a username in search, transfers or uploads. Filter by folder or file name, download single files or a whole folder with its subfolders. Folders with more than 200 files ask before downloading.
 - **Messages**: private conversations with any user, even offline ones. Unread counts in the sidebar, a toast for new messages, and logs saved on this computer per account (`%APPDATA%\bawkseek\messages`).
@@ -20,7 +20,8 @@ A Soulseek desktop client for Windows, built in Rust with [GPUI Kit](https://gpu
 - **Uploads**: who downloads from you, with progress, speed and queue place. Cancel a running upload, clear finished ones, and set how many people can download at once (upload slots, 1 to 50, default 10).
 - **Reconnects**: a dropped server connection reconnects by itself. Queued downloads resume when their peer is back.
 - **Notifications**: new messages, finished folders and new wishlist results show as toasts, and in the Windows notification center when bawkseek is in the background.
-- **Settings**: download folder and speed limit, listening port with automatic UPnP port mapping, away status, privileges, password change, dark or light theme.
+- **Settings**: download folder and speed limit, listening port with automatic UPnP port mapping, away status, privileges, password change.
+- **Appearance**: bawk dark, bawk light or follow Windows, plus 30 named themes from bawkterm (gruvbox, catppuccin, tokyo night, nord, dracula and more).
 
 Not in the Soulseek library yet, so not here either: an upload speed limit, refusing downloads from banned users, your own profile text and picture.
 

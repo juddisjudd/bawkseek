@@ -3,6 +3,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::theme::{DEFAULT_THEME, Mode};
+
 const KEYRING_SERVICE: &str = "bawkseek";
 pub const DEFAULT_LISTEN_PORT: u16 = 2234;
 pub const DEFAULT_UPLOAD_SLOTS: usize = 10;
@@ -14,7 +16,8 @@ pub struct Config {
     pub remember: bool,
     pub download_dir: PathBuf,
     pub listen_port: u16,
-    pub light_theme: bool,
+    pub theme: String,
+    pub mode: Mode,
     pub shared_dirs: Vec<PathBuf>,
     pub upload_slots: usize,
     pub buddies: Vec<String>,
@@ -32,7 +35,8 @@ impl Default for Config {
             remember: true,
             download_dir: default_download_dir(),
             listen_port: DEFAULT_LISTEN_PORT,
-            light_theme: false,
+            theme: DEFAULT_THEME.into(),
+            mode: Mode::Dark,
             shared_dirs: Vec::new(),
             upload_slots: DEFAULT_UPLOAD_SLOTS,
             buddies: Vec::new(),

@@ -5,17 +5,18 @@ use gpui_kit::component::WindowExt;
 use gpui_kit::component::button::{Button, ButtonVariants};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::switch::Switch;
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::kit;
 use crate::config::Config;
 use crate::net::{PortMap, Session};
-use crate::theme::{Palette, palette};
+use crate::theme::{self, DEFAULT_THEME, Look, Mode, Palette, palette};
 
 pub enum SettingsEvent {
     DownloadDir(PathBuf),
     ListenPort(u16),
-    LightTheme(bool),
+    Theme(SharedString, Mode),
     Away(bool),
     Upnp(bool),
     DownloadLimit(u64),
@@ -26,7 +27,8 @@ pub enum SettingsEvent {
 pub struct SettingsView {
     session: Entity<Session>,
     username: SharedString,
-    light_theme: bool,
+    theme: SharedString,
+    mode: Mode,
     away: bool,
     upnp: bool,
     download_dir: Entity<InputState>,
@@ -78,7 +80,8 @@ impl SettingsView {
         Self {
             session,
             username: config.username.clone().into(),
-            light_theme: config.light_theme,
+            theme: config.theme.clone().into(),
+            mode: config.mode,
             away: false,
             upnp: config.upnp,
             download_dir,
@@ -145,6 +148,71 @@ impl SettingsView {
             });
         })
         .detach();
+    }
+
+    fn pick_theme(&mut self, id: SharedString, mode: Mode, cx: &mut Context<Self>) {
+        self.theme = id.clone();
+        self.mode = mode;
+        cx.emit(SettingsEvent::Theme(id, mode));
+        cx.notify();
+    }
+
+    fn render_modes(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
+        let own = self.theme == DEFAULT_THEME;
+        div()
+            .flex()
+            .flex_none()
+            .p(px(2.))
+            .gap(px(2.))
+            .rounded(px(4.))
+            .border_1()
+            .border_color(p.border_weak)
+            .children(
+                [
+                    (Mode::System, "system"),
+                    (Mode::Dark, "dark"),
+                    (Mode::Light, "light"),
+                ]
+                .map(|(mode, label)| {
+                    let active = own && self.mode == mode;
+                    div()
+                        .id(label)
+                        .px(px(12.))
+                        .py(px(3.))
+                        .rounded(px(3.))
+                        .cursor_pointer()
+                        .text_color(if active { p.text_strong } else { p.text_weak })
+                        .when(active, |this| this.bg(p.bg_hover))
+                        .hover(|style| style.text_color(p.text_strong))
+                        .child(label)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.pick_theme(DEFAULT_THEME.into(), mode, cx)
+                        }))
+                }),
+            )
+    }
+
+    fn render_looks(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
+        let looks = theme::looks(cx).to_vec();
+        div()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .children(looks.into_iter().map(|look| {
+                let active = look.id == self.theme;
+                let (bg, fg, cursor) = if look.id == DEFAULT_THEME && active {
+                    (p.bg, p.text_strong, p.yolk)
+                } else {
+                    (look.bg, look.fg, look.cursor)
+                };
+                look_card(&look, bg, fg, cursor, active, p).on_click(cx.listener({
+                    let id = look.id.clone();
+                    move |this, _, _, cx| {
+                        let mode = this.mode;
+                        this.pick_theme(id.clone(), mode, cx)
+                    }
+                }))
+            }))
     }
 
     fn change_password(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -238,6 +306,54 @@ fn field(
         .child(div().flex_1().min_w_0().max_w(px(560.)).child(control))
 }
 
+fn look_card(
+    look: &Look,
+    bg: Hsla,
+    fg: Hsla,
+    cursor: Hsla,
+    active: bool,
+    p: &Palette,
+) -> Stateful<Div> {
+    let mut words: Vec<&str> = look.label.split(' ').collect();
+    let last = words.pop().unwrap_or_default().to_string();
+    div()
+        .id(SharedString::from(format!("look-{}", look.id)))
+        .w(px(150.))
+        .flex()
+        .flex_col()
+        .gap_2()
+        .p(px(10.))
+        .rounded(px(4.))
+        .border_2()
+        .border_color(if active { p.yolk } else { p.border_weak })
+        .cursor_pointer()
+        .bg(bg)
+        .text_color(fg)
+        .text_size(px(12.))
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap_x(px(7.))
+                .children(words.into_iter().map(|word| div().child(word.to_string())))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(last)
+                        .child(div().w(px(7.)).h(px(13.)).bg(cursor)),
+                ),
+        )
+        .child(
+            div().flex().gap(px(3.)).children(
+                look.swatches
+                    .map(|color| div().size(px(12.)).rounded(px(2.)).bg(color)),
+            ),
+        )
+}
+
 fn portmap_status(state: &PortMap) -> String {
     match state {
         PortMap::Off => "off. forward the port on your router yourself.".into(),
@@ -274,6 +390,16 @@ impl Render for SettingsView {
             "use a number from 1024 to 65535"
         } else {
             "peers connect to you on this port. takes effect at next login."
+        };
+        let theme_hint: SharedString = if self.theme == DEFAULT_THEME {
+            "system follows windows".into()
+        } else {
+            let label = theme::looks(cx)
+                .iter()
+                .find(|look| look.id == self.theme)
+                .map(|look| look.label.clone())
+                .unwrap_or_default();
+            format!("set by {label}. pick one to go back to bawk.").into()
         };
         let limit_hint = if self.limit_error {
             "use a whole number, or 0 for no limit"
@@ -394,18 +520,14 @@ impl Render for SettingsView {
                     )),
             )
             .child(
-                section("appearance", &p).child(field(
-                    "light theme",
-                    "dark is the default",
-                    Switch::new("light-theme")
-                        .checked(self.light_theme)
-                        .on_click(cx.listener(|this, checked: &bool, _, cx| {
-                            this.light_theme = *checked;
-                            cx.emit(SettingsEvent::LightTheme(*checked));
-                            cx.notify();
-                        })),
-                    &p,
-                )),
+                section("appearance", &p)
+                    .child(field(
+                        "app theme",
+                        theme_hint,
+                        div().flex().child(self.render_modes(&p, cx)),
+                        &p,
+                    ))
+                    .child(self.render_looks(&p, cx)),
             )
     }
 }

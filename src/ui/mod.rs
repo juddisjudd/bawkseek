@@ -13,14 +13,14 @@ mod users;
 
 use gpui_kit::component::button::Button;
 use gpui_kit::component::notification::Notification;
-use gpui_kit::component::{Sizable, Theme, ThemeMode, WindowExt};
+use gpui_kit::component::{Sizable, WindowExt};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use std::collections::HashSet;
 
 use crate::config::{self, Config};
 use crate::net::{Command, LoginSettings, Notice, NoticeLevel, Session, Status};
-use crate::theme::palette;
+use crate::theme::{self, Mode, palette};
 
 use browse::BrowseView;
 use chrome::{Page, Presence};
@@ -82,9 +82,7 @@ pub struct Workspace {
 impl Workspace {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let config = Config::load();
-        if config.light_theme {
-            Theme::change(ThemeMode::Light, Some(window), cx);
-        }
+        theme::apply(&config.theme, config.mode, Some(window), cx);
 
         let session = cx.new(Session::new);
         let login = cx.new(|cx| LoginView::new(&config.username, config.remember, window, cx));
@@ -138,6 +136,11 @@ impl Workspace {
                 window.push_notification(note, cx);
             }),
             cx.observe_in(&session, window, Self::on_session),
+            cx.observe_window_appearance(window, |this, window, cx| {
+                if this.config.mode == Mode::System {
+                    theme::apply(&this.config.theme, Mode::System, Some(window), cx);
+                }
+            }),
         ];
 
         let mut this = Self {
@@ -267,14 +270,10 @@ impl Workspace {
                     .update(cx, |view, _| view.set_download_dir(dir.clone()));
             }
             SettingsEvent::ListenPort(port) => self.config.listen_port = *port,
-            SettingsEvent::LightTheme(light) => {
-                self.config.light_theme = *light;
-                let mode = if *light {
-                    ThemeMode::Light
-                } else {
-                    ThemeMode::Dark
-                };
-                Theme::change(mode, Some(window), cx);
+            SettingsEvent::Theme(id, mode) => {
+                self.config.theme = id.to_string();
+                self.config.mode = *mode;
+                theme::apply(id, *mode, Some(window), cx);
             }
             SettingsEvent::Away(away) => {
                 self.session

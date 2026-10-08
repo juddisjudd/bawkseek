@@ -454,7 +454,7 @@ fn file_row(
             .text_color(match row.state {
                 UlState::Completed => p.success,
                 UlState::Failed(_) => p.danger,
-                _ => p.text_weaker,
+                _ => p.format(&format::extension(&row.name)),
             }),
         )
         .child(

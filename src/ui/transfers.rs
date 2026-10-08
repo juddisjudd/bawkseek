@@ -325,7 +325,7 @@ fn file_row(
             .text_color(match row.state {
                 DlState::Completed => p.success,
                 DlState::Failed(_) => p.danger,
-                _ => p.text_weaker,
+                _ => p.format(&format::extension(&row.name)),
             }),
         )
         .child(

@@ -48,7 +48,18 @@ pub struct FolderHit {
     pub size: u64,
     pub speed: u32,
     pub free: bool,
-    pub summary: String,
+    pub format: String,
+    pub quality: String,
+}
+
+impl FolderHit {
+    pub fn summary(&self) -> String {
+        if self.quality.is_empty() {
+            self.format.clone()
+        } else {
+            format!("{} {}", self.format, self.quality)
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -79,7 +90,8 @@ pub fn group(results: &[SearchResult]) -> SearchHits {
                     size: 0,
                     speed: result.speed,
                     free: result.slots > 0,
-                    summary: String::new(),
+                    format: String::new(),
+                    quality: String::new(),
                 });
                 folders.len() - 1
             });
@@ -103,7 +115,7 @@ pub fn group(results: &[SearchResult]) -> SearchHits {
 
     for folder in &mut folders {
         folder.files.sort_by(|a, b| a.name.cmp(&b.name));
-        folder.summary = summarize(&folder.files);
+        (folder.format, folder.quality) = summarize(&folder.files);
     }
 
     SearchHits {
@@ -121,8 +133,8 @@ fn khz(rate: u32) -> String {
     }
 }
 
-/// One short quality label for a folder, from its dominant audio format.
-fn summarize(files: &[FileHit]) -> String {
+/// A folder's dominant audio format and one short quality label for it.
+fn summarize(files: &[FileHit]) -> (String, String) {
     let mut counts: HashMap<&str, usize> = HashMap::new();
     for file in files {
         if LOSSLESS.contains(&file.ext.as_str()) || LOSSY.contains(&file.ext.as_str()) {
@@ -133,10 +145,8 @@ fn summarize(files: &[FileHit]) -> String {
         .iter()
         .max_by_key(|(ext, count)| (**count, std::cmp::Reverse(**ext)))
     else {
-        return files
-            .first()
-            .map(|file| file.ext.clone())
-            .unwrap_or_default();
+        let ext = files.first().map(|file| file.ext.clone());
+        return (ext.unwrap_or_default(), String::new());
     };
     let audio: Vec<&FileHit> = files.iter().filter(|file| file.ext == *ext).collect();
 
@@ -144,24 +154,29 @@ fn summarize(files: &[FileHit]) -> String {
         let depth = uniform(audio.iter().map(|file| file.bit_depth));
         let rate = uniform(audio.iter().map(|file| file.sample_rate));
         match (depth, rate) {
-            (Some(depth), Some(rate)) => format!(" {depth}/{}", khz(rate)),
+            (Some(depth), Some(rate)) => format!("{depth}/{}", khz(rate)),
             _ => String::new(),
         }
     } else {
         let rates: Vec<u32> = audio.iter().filter_map(|file| file.bitrate).collect();
         let vbr = audio.iter().any(|file| file.vbr);
         match uniform(audio.iter().map(|file| file.bitrate)) {
-            Some(rate) if !vbr => format!(" {rate}"),
+            Some(rate) if !vbr => rate.to_string(),
             _ if !rates.is_empty() => {
                 let average = rates.iter().sum::<u32>() / rates.len() as u32;
-                format!(" ~{average}")
+                format!("~{average}")
             }
             _ => String::new(),
         }
     };
 
-    let mixed = if counts.len() > 1 { " +" } else { "" };
-    format!("{ext}{quality}{mixed}")
+    let mixed = if counts.len() > 1 { "+" } else { "" };
+    let quality = [quality.as_str(), mixed]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    (ext.to_string(), quality)
 }
 
 fn uniform(mut values: impl Iterator<Item = Option<u32>>) -> Option<u32> {
@@ -241,10 +256,10 @@ mod tests {
         assert_eq!(album.size, 50);
         assert!(album.free);
         assert_eq!(album.files[0].name, "01 a.flac");
-        assert_eq!(album.summary, "flac 16/44.1");
+        assert_eq!(album.summary(), "flac 16/44.1");
 
-        assert_eq!(hits.folders[1].summary, "mp3 320");
-        assert_eq!(hits.folders[2].summary, "mp3 ~192");
+        assert_eq!(hits.folders[1].summary(), "mp3 320");
+        assert_eq!(hits.folders[2].summary(), "mp3 ~192");
         assert!(!hits.folders[2].free);
     }
 
@@ -264,6 +279,7 @@ mod tests {
         assert_eq!(files[0].quality(), "24/96");
         assert_eq!(files[1].quality(), "~245");
         assert_eq!(files[2].quality(), "");
-        assert_eq!(hits.folders[0].summary, "flac 24/96 +");
+        assert_eq!(hits.folders[0].format, "flac");
+        assert_eq!(hits.folders[0].quality, "24/96 +");
     }
 }

@@ -150,6 +150,34 @@ pub fn tag(label: impl Into<SharedString>, p: &Palette) -> Div {
         .child(label.into())
 }
 
+/// A format name in its own color, so flac and mp3 tell apart at a glance.
+pub fn format_tag(ext: &str, quality: &str, p: &Palette) -> Div {
+    let color = p.format(ext);
+    div()
+        .flex_none()
+        .flex()
+        .gap(px(5.))
+        .px(px(5.))
+        .rounded(px(3.))
+        .bg(color.opacity(0.14))
+        .text_size(px(11.))
+        .child(div().text_color(color).child(ext.to_string()))
+        .when(!quality.is_empty(), |this| {
+            this.child(div().text_color(p.text_weak).child(quality.to_string()))
+        })
+}
+
+pub fn file_icon(ext: &str, p: &Palette) -> Icon {
+    let audio = p.format(ext) != p.text_weaker;
+    Icon::new(if audio {
+        IconName::FileMusic
+    } else {
+        IconName::File
+    })
+    .size(px(13.))
+    .text_color(p.format(ext))
+}
+
 pub fn strong(text: impl Into<SharedString>, p: &Palette) -> Div {
     div().text_color(p.text_strong).child(text.into())
 }
