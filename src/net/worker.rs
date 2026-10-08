@@ -9,6 +9,7 @@ use soulseek_rs::types::DownloadMetadata;
 use soulseek_rs::utils::logger::{self, LogLevel};
 use soulseek_rs::{Client, ClientSettings, DownloadStatus, SessionLoss, SoulseekRs};
 
+use super::browse::Listing;
 use super::group::group;
 use super::sharing::{Scanner, Uploads};
 use super::{Command, DlState, DownloadRow, Event, NoticeLevel, Status, Wanted};
@@ -21,6 +22,7 @@ const QUEUE_REFRESH: Duration = Duration::from_secs(3);
 const PING_EVERY: Duration = Duration::from_secs(60);
 const FOLDER_TIMEOUT: Duration = Duration::from_secs(25);
 const MAX_BACKOFF: Duration = Duration::from_secs(60);
+const BROWSE_TIMEOUT: Duration = Duration::from_secs(90);
 
 pub fn spawn() -> (Sender<Command>, Receiver<Event>) {
     let (command_tx, command_rx) = mpsc::channel();
@@ -79,6 +81,7 @@ struct Worker {
     upload_slots: usize,
     scanner: Scanner,
     uploads: Uploads,
+    browses: Vec<(String, Instant)>,
 }
 
 impl Worker {
@@ -106,6 +109,7 @@ impl Worker {
             shares: Vec::new(),
             upload_slots: crate::config::DEFAULT_UPLOAD_SLOTS,
             uploads: Uploads::default(),
+            browses: Vec::new(),
         }
     }
 
@@ -228,6 +232,8 @@ impl Worker {
                     let _ = client.cancel_upload(&username, &filename);
                 }
             }
+            Command::Browse(username) => self.browse(username),
+            Command::DownloadTree { root, files } => self.enqueue_tree(&root, files),
             Command::ClearUploads => {
                 if let Some(client) = &self.client {
                     self.uploads.clear_finished(client);
@@ -294,9 +300,56 @@ impl Worker {
         }
     }
 
+    fn browse(&mut self, username: String) {
+        let Some(client) = &self.client else {
+            return;
+        };
+        match client.browse_user(&username) {
+            Ok(()) => {
+                self.browses.retain(|(user, _)| *user != username);
+                self.browses
+                    .push((username, Instant::now() + BROWSE_TIMEOUT));
+            }
+            Err(err) => self.emit(Event::Browse {
+                username,
+                result: Err(describe(&err)),
+            }),
+        }
+    }
+
+    /// Big listings take a moment to parse, so the tree is built off the worker thread.
+    fn poll_browses(&mut self, client: &Client) {
+        let now = Instant::now();
+        let events = self.events.clone();
+        self.browses.retain(|(username, deadline)| {
+            if let Some(dirs) = client.take_browse_result(username) {
+                let (events, username) = (events.clone(), username.clone());
+                thread::spawn(move || {
+                    let listing = Listing::build(dirs);
+                    let _ = events.send(Event::Browse {
+                        username,
+                        result: Ok(Arc::new(listing)),
+                    });
+                });
+                false
+            } else if now >= *deadline {
+                let _ = events.send(Event::Browse {
+                    username: username.clone(),
+                    result: Err(format!(
+                        "no answer from {username}. they may be offline or unreachable."
+                    )),
+                });
+                false
+            } else {
+                true
+            }
+        });
+    }
+
     fn drop_client(&mut self) {
         self.scanner.invalidate();
         self.uploads.reset();
+        self.browses.clear();
         self.client = None;
     }
 
@@ -453,6 +506,7 @@ impl Worker {
         self.poll_searches(&client);
         self.poll_folders(&client);
         self.poll_downloads(&client);
+        self.poll_browses(&client);
         if let Some(rows) = self.uploads.poll(&client) {
             self.emit(Event::Uploads(rows));
         }
@@ -569,6 +623,29 @@ impl Worker {
         }
     }
 
+    /// Downloads a remote folder into one local folder named after it, keeping its subfolders.
+    fn enqueue_tree(&mut self, root: &str, files: Vec<(Wanted, String)>) {
+        let name = format::split_path(root).1;
+        let base = self.download_dir.join(sanitize(name));
+        let mut count = 0;
+        for (wanted, relative) in files {
+            let mut local = base.clone();
+            for part in relative.split(['\\', '/']).filter(|part| !part.is_empty()) {
+                local.push(sanitize(part));
+            }
+            if self.enqueue_to(wanted, Some(local)) {
+                count += 1;
+            }
+        }
+        self.notice(
+            NoticeLevel::Info,
+            format!(
+                "queued {} from {name}",
+                format::plural(count, "file", "files")
+            ),
+        );
+    }
+
     fn poll_folders(&mut self, client: &Client) {
         let mut ready = Vec::new();
         let mut expired = Vec::new();
@@ -588,16 +665,13 @@ impl Worker {
         });
 
         for (username, folder, dirs) in ready {
-            let root = self
-                .download_dir
-                .join(sanitize(format::split_path(&folder).1));
-            let mut count = 0;
+            let mut files = Vec::new();
             for dir in dirs {
-                let mut local = root.clone();
-                let relative = dir.name.strip_prefix(folder.as_str()).unwrap_or("");
-                for part in relative.split(['\\', '/']).filter(|part| !part.is_empty()) {
-                    local.push(sanitize(part));
-                }
+                let relative = dir
+                    .name
+                    .strip_prefix(folder.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 for entry in dir.files {
                     let wanted = Wanted {
                         username: username.clone(),
@@ -606,18 +680,10 @@ impl Worker {
                         bitrate: entry.attribute(0),
                         duration: entry.attribute(1),
                     };
-                    if self.enqueue_to(wanted, Some(local.clone())) {
-                        count += 1;
-                    }
+                    files.push((wanted, relative.clone()));
                 }
             }
-            self.notice(
-                NoticeLevel::Info,
-                format!(
-                    "queued {count} files from {}",
-                    format::split_path(&folder).1
-                ),
-            );
+            self.enqueue_tree(&folder, files);
         }
 
         for (username, fallback) in expired {

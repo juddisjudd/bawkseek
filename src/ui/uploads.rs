@@ -13,7 +13,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::kit;
+use super::{OpenUser, kit};
 use crate::format;
 use crate::net::{Command, Session, UlState, UploadRow, overlaps, virtual_roots};
 use crate::theme::{Palette, palette};
@@ -238,7 +238,7 @@ impl UploadsView {
             .map(|row| match row {
                 Row::Gap => div().h(px(GAP_ROW)).w_full().into_any_element(),
                 Row::Group(gx) => {
-                    group_row(&layout.groups[gx], gx, &layout.uploads, &p).into_any_element()
+                    group_row(&layout.groups[gx], gx, &layout.uploads, &p, cx).into_any_element()
                 }
                 Row::File { row, last } => {
                     file_row(&layout.uploads[row], last, &p, cx).into_any_element()
@@ -355,7 +355,13 @@ impl UploadsView {
     }
 }
 
-fn group_row(group: &Group, gx: usize, uploads: &[UploadRow], p: &Palette) -> impl IntoElement {
+fn group_row(
+    group: &Group,
+    gx: usize,
+    uploads: &[UploadRow],
+    p: &Palette,
+    cx: &mut Context<UploadsView>,
+) -> impl IntoElement {
     let rows: Vec<&UploadRow> = group.rows.iter().map(|ix| &uploads[*ix]).collect();
     let active = rows
         .iter()
@@ -388,7 +394,16 @@ fn group_row(group: &Group, gx: usize, uploads: &[UploadRow], p: &Palette) -> im
                 .size(px(14.))
                 .text_color(p.text_weaker),
         )
-        .child(kit::truncate(group.username.clone()).text_color(p.text_strong))
+        .child({
+            let username = group.username.clone();
+            kit::user_link(
+                ("upload-user", gx),
+                group.username.clone(),
+                p.text_strong,
+                p,
+            )
+            .on_click(cx.listener(move |_, _, _, cx| cx.emit(OpenUser(username.clone()))))
+        })
         .child(div().flex_1())
         .child(
             div()
@@ -496,6 +511,8 @@ fn file_row(
                 }),
         )
 }
+
+impl EventEmitter<OpenUser> for UploadsView {}
 
 impl Render for UploadsView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

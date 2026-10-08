@@ -1,3 +1,4 @@
+mod browse;
 mod group;
 mod sharing;
 mod worker;
@@ -9,6 +10,7 @@ use std::time::Duration;
 
 use gpui_kit::*;
 
+pub use browse::{Listing, Node};
 pub use group::{FileHit, FolderHit, SearchHits};
 pub use sharing::{overlaps, virtual_roots};
 
@@ -169,6 +171,11 @@ pub enum Command {
         filename: String,
     },
     ClearUploads,
+    Browse(String),
+    DownloadTree {
+        root: String,
+        files: Vec<(Wanted, String)>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -187,12 +194,27 @@ pub enum Event {
     Downloads(Arc<Vec<DownloadRow>>),
     Uploads(Arc<Vec<UploadRow>>),
     Shares(ShareState),
+    Browse {
+        username: String,
+        result: Result<Arc<Listing>, String>,
+    },
     Notice(NoticeLevel, String),
 }
 
 pub struct SearchTab {
     pub query: SharedString,
     pub hits: Arc<SearchHits>,
+}
+
+pub enum BrowseState {
+    Loading,
+    Ready(Arc<Listing>),
+    Failed(String),
+}
+
+pub struct BrowseTab {
+    pub username: SharedString,
+    pub state: BrowseState,
 }
 
 #[derive(Clone)]
@@ -207,6 +229,7 @@ pub struct Session {
     pub downloads: Arc<Vec<DownloadRow>>,
     pub uploads: Arc<Vec<UploadRow>>,
     pub shares: ShareState,
+    pub browses: Vec<BrowseTab>,
     _pump: Task<()>,
 }
 
@@ -236,6 +259,7 @@ impl Session {
             downloads: Arc::default(),
             uploads: Arc::default(),
             shares: ShareState::default(),
+            browses: Vec::new(),
             _pump: pump,
         }
     }
@@ -275,6 +299,14 @@ impl Session {
             Event::Downloads(rows) => self.downloads = rows,
             Event::Uploads(rows) => self.uploads = rows,
             Event::Shares(shares) => self.shares = shares,
+            Event::Browse { username, result } => {
+                if let Some(tab) = self.browses.iter_mut().find(|tab| tab.username == username) {
+                    tab.state = match result {
+                        Ok(listing) => BrowseState::Ready(listing),
+                        Err(reason) => BrowseState::Failed(reason),
+                    };
+                }
+            }
             Event::Notice(level, text) => cx.emit(Notice(level, text.into())),
         }
     }
@@ -284,6 +316,7 @@ impl Session {
         self.downloads = Arc::default();
         self.uploads = Arc::default();
         self.shares = ShareState::default();
+        self.browses.clear();
     }
 
     pub fn send(&self, command: Command) {
@@ -325,6 +358,44 @@ impl Session {
         if ix < self.searches.len() {
             let tab = self.searches.remove(ix);
             self.send(Command::ForgetSearch(tab.query.to_string()));
+            cx.notify();
+        }
+    }
+
+    /// Returns the tab index for `username`, asking for their shares unless a listing is open or on its way.
+    pub fn browse(&mut self, username: &str, cx: &mut Context<Self>) -> usize {
+        let ix = match self
+            .browses
+            .iter()
+            .position(|tab| tab.username.as_ref() == username)
+        {
+            Some(ix) => ix,
+            None => {
+                self.browses.push(BrowseTab {
+                    username: username.to_string().into(),
+                    state: BrowseState::Failed(String::new()),
+                });
+                self.browses.len() - 1
+            }
+        };
+        if matches!(self.browses[ix].state, BrowseState::Failed(_)) {
+            self.refresh_browse(ix, cx);
+        }
+        ix
+    }
+
+    pub fn refresh_browse(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if let Some(tab) = self.browses.get_mut(ix) {
+            tab.state = BrowseState::Loading;
+            let username = tab.username.to_string();
+            self.send(Command::Browse(username));
+            cx.notify();
+        }
+    }
+
+    pub fn close_browse(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if ix < self.browses.len() {
+            self.browses.remove(ix);
             cx.notify();
         }
     }

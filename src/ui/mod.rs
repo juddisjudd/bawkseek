@@ -1,3 +1,4 @@
+mod browse;
 mod chrome;
 mod kit;
 mod login;
@@ -17,12 +18,16 @@ use crate::config::{self, Config};
 use crate::net::{Command, Notice, NoticeLevel, Session, Status};
 use crate::theme::palette;
 
+use browse::BrowseView;
 use chrome::{Page, Presence};
 use login::{LoginRequest, LoginView};
 use search::SearchView;
 use settings::{SettingsEvent, SettingsView};
 use transfers::TransfersView;
 use uploads::{UploadsEvent, UploadsView};
+
+/// Asks the workspace to open a user's shares.
+pub struct OpenUser(pub String);
 
 struct PendingLogin {
     username: String,
@@ -40,6 +45,7 @@ pub struct Workspace {
     search: Entity<SearchView>,
     transfers: Entity<TransfersView>,
     uploads: Entity<UploadsView>,
+    browse: Entity<BrowseView>,
     settings: Entity<SettingsView>,
     _subscriptions: Vec<Subscription>,
 }
@@ -65,6 +71,7 @@ impl Workspace {
                 cx,
             )
         });
+        let browse = cx.new(|cx| BrowseView::new(session.clone(), window, cx));
         let settings = cx.new(|cx| SettingsView::new(&config, window, cx));
 
         let subscriptions = vec![
@@ -78,6 +85,9 @@ impl Workspace {
             }),
             cx.subscribe_in(&settings, window, Self::on_settings),
             cx.subscribe_in(&uploads, window, Self::on_uploads),
+            cx.subscribe_in(&search, window, Self::open_user),
+            cx.subscribe_in(&transfers, window, Self::open_user),
+            cx.subscribe_in(&uploads, window, Self::open_user),
             cx.subscribe_in(&session, window, |_, _, notice: &Notice, window, cx| {
                 let note = match notice.0 {
                     NoticeLevel::Info => Notification::info(notice.1.clone()),
@@ -98,6 +108,7 @@ impl Workspace {
             search,
             transfers,
             uploads,
+            browse,
             settings,
             _subscriptions: subscriptions,
         };
@@ -249,6 +260,19 @@ impl Workspace {
         self.save();
     }
 
+    fn open_user<V>(
+        &mut self,
+        _: &Entity<V>,
+        event: &OpenUser,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.page = Page::Browse;
+        self.browse
+            .update(cx, |browse, cx| browse.open(&event.0, cx));
+        cx.notify();
+    }
+
     fn save(&self) {
         if let Err(err) = self.config.save() {
             eprintln!("could not save settings: {err}");
@@ -257,9 +281,14 @@ impl Workspace {
 
     fn select(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
         self.page = page;
-        if page == Page::Search {
-            self.search
-                .update(cx, |search, cx| search.focus(window, cx));
+        match page {
+            Page::Search => self
+                .search
+                .update(cx, |search, cx| search.focus(window, cx)),
+            Page::Browse => self
+                .browse
+                .update(cx, |browse, cx| browse.focus(window, cx)),
+            _ => {}
         }
         cx.notify();
     }
@@ -309,11 +338,6 @@ impl Workspace {
 fn placeholder(page: Page, cx: &App) -> Div {
     let p = palette(cx);
     let (icon, title, body) = match page {
-        Page::Browse => (
-            IconName::FolderSearch,
-            "browsing is not built yet",
-            "you will be able to open any user's shared folders here.",
-        ),
         Page::Rooms => (
             IconName::Hash,
             "chat rooms are not built yet",
@@ -378,6 +402,7 @@ impl Render for Workspace {
             Page::Search => self.search.clone().into_any_element(),
             Page::Transfers => self.transfers.clone().into_any_element(),
             Page::Uploads => self.uploads.clone().into_any_element(),
+            Page::Browse => self.browse.clone().into_any_element(),
             Page::Settings => self.settings.clone().into_any_element(),
             page => placeholder(page, cx).into_any_element(),
         };

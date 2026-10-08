@@ -9,7 +9,7 @@ use gpui_kit::component::{Disableable, Icon, Sizable, VirtualListScrollHandle, v
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::kit;
+use super::{OpenUser, kit};
 use crate::format;
 use crate::net::{Command, DlState, DownloadRow, Session};
 use crate::theme::{Palette, palette};
@@ -204,7 +204,21 @@ fn group_row(
             })
             .text_color(p.text_strong),
         )
-        .child(kit::truncate(format!("from {}", group.username)).text_color(p.text_weak))
+        .child(
+            div()
+                .flex()
+                .min_w_0()
+                .gap_2()
+                .text_color(p.text_weak)
+                .child("from")
+                .child({
+                    let username = group.username.clone();
+                    kit::user_link(("group-user", gx), group.username.clone(), p.text_weak, p)
+                        .on_click(
+                            cx.listener(move |_, _, _, cx| cx.emit(OpenUser(username.clone()))),
+                        )
+                }),
+        )
         .child(div().flex_1())
         .child(
             div()
@@ -358,6 +372,8 @@ fn file_row(
                 .child(secondary),
         )
 }
+
+impl EventEmitter<OpenUser> for TransfersView {}
 
 impl Render for TransfersView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

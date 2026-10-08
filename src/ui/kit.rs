@@ -119,6 +119,25 @@ pub fn strong(text: impl Into<SharedString>, p: &Palette) -> Div {
     div().text_color(p.text_strong).child(text.into())
 }
 
+pub fn user_link(
+    id: impl Into<ElementId>,
+    username: impl Into<SharedString>,
+    color: Hsla,
+    p: &Palette,
+) -> Stateful<Div> {
+    let hover = p.text_strong;
+    div()
+        .id(id)
+        .min_w_0()
+        .overflow_hidden()
+        .whitespace_nowrap()
+        .text_ellipsis()
+        .cursor_pointer()
+        .text_color(color)
+        .hover(move |style| style.text_color(hover).underline())
+        .child(username.into())
+}
+
 pub fn truncate(text: impl Into<SharedString>) -> Div {
     div()
         .min_w_0()
