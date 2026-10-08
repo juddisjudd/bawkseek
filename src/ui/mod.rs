@@ -1,5 +1,6 @@
 mod browse;
 mod chrome;
+mod discover;
 mod kit;
 mod login;
 mod messages;
@@ -23,6 +24,7 @@ use crate::theme::palette;
 
 use browse::BrowseView;
 use chrome::{Page, Presence};
+use discover::{DiscoverEvent, DiscoverView};
 use login::{LoginRequest, LoginView};
 use messages::MessagesView;
 use rooms::RoomsView;
@@ -71,6 +73,7 @@ pub struct Workspace {
     messages: Entity<MessagesView>,
     rooms: Entity<RoomsView>,
     users: Entity<UsersView>,
+    discover: Entity<DiscoverView>,
     settings: Entity<SettingsView>,
     _subscriptions: Vec<Subscription>,
 }
@@ -100,6 +103,7 @@ impl Workspace {
         let messages = cx.new(|cx| MessagesView::new(session.clone(), window, cx));
         let rooms = cx.new(|cx| RoomsView::new(session.clone(), window, cx));
         let users = cx.new(|cx| UsersView::new(session.clone(), window, cx));
+        let discover = cx.new(|cx| DiscoverView::new(session.clone(), window, cx));
         let settings = cx.new(|cx| SettingsView::new(&config, window, cx));
 
         let subscriptions = vec![
@@ -119,6 +123,8 @@ impl Workspace {
             cx.subscribe_in(&messages, window, Self::open_user),
             cx.subscribe_in(&rooms, window, Self::open_user),
             cx.subscribe_in(&users, window, Self::open_user),
+            cx.subscribe_in(&discover, window, Self::open_user),
+            cx.subscribe_in(&discover, window, Self::on_discover),
             cx.subscribe_in(&session, window, |_, _, notice: &Notice, window, cx| {
                 let note = match notice.0 {
                     NoticeLevel::Info => Notification::info(notice.1.clone()),
@@ -143,6 +149,7 @@ impl Workspace {
             messages,
             rooms,
             users,
+            discover,
             settings,
             _subscriptions: subscriptions,
         };
@@ -180,6 +187,8 @@ impl Workspace {
             shares: self.config.shared_dirs.clone(),
             upload_slots: self.config.upload_slots,
             buddies: self.config.buddies.clone(),
+            likes: self.config.likes.clone(),
+            dislikes: self.config.dislikes.clone(),
         };
         self.session
             .update(cx, |session, cx| session.login(command, cx));
@@ -357,11 +366,47 @@ impl Workspace {
             buddies: self.config.buddies.iter().cloned().collect(),
             ignored: ignored.clone(),
         });
+        let (likes, dislikes) = (self.config.likes.clone(), self.config.dislikes.clone());
         self.session.update(cx, |session, cx| {
             session.ignored = ignored;
+            session.likes = likes;
+            session.dislikes = dislikes;
             cx.notify();
         });
         cx.notify();
+    }
+
+    fn on_discover(
+        &mut self,
+        _: &Entity<DiscoverView>,
+        event: &DiscoverEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            DiscoverEvent::Search(query) => {
+                self.search.update(cx, |search, cx| search.open(query, cx));
+                self.select(Page::Search, window, cx);
+            }
+            DiscoverEvent::SetInterest { item, like, add } => {
+                let list = if *like {
+                    &mut self.config.likes
+                } else {
+                    &mut self.config.dislikes
+                };
+                list.retain(|existing| existing != item);
+                if *add {
+                    list.push(item.clone());
+                }
+                self.session.read(cx).send(Command::SetInterest {
+                    item: item.clone(),
+                    like: *like,
+                    add: *add,
+                });
+                self.save();
+                self.sync_social(cx);
+            }
+        }
     }
 
     fn save(&self) {
@@ -386,6 +431,10 @@ impl Workspace {
                 .update(cx, |browse, cx| browse.focus(window, cx)),
             Page::Rooms => self.rooms.update(cx, |rooms, cx| rooms.focus(window, cx)),
             Page::Users => self.users.update(cx, |users, cx| users.focus(window, cx)),
+            Page::Discover => self.discover.update(cx, |discover, cx| {
+                discover.focus(window, cx);
+                discover.refresh(cx);
+            }),
             Page::Messages => self
                 .messages
                 .update(cx, |messages, cx| messages.focus(window, cx)),
@@ -487,6 +536,7 @@ impl Render for Workspace {
             Page::Settings => self.settings.clone().into_any_element(),
             Page::Rooms => self.rooms.clone().into_any_element(),
             Page::Users => self.users.clone().into_any_element(),
+            Page::Discover => self.discover.clone().into_any_element(),
         };
 
         root.child(

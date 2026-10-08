@@ -10,6 +10,7 @@ use soulseek_rs::utils::logger::{self, LogLevel};
 use soulseek_rs::{Client, ClientSettings, DownloadStatus, RoomEvent, SessionLoss, SoulseekRs};
 
 use super::browse::Listing;
+use super::discover::Discover;
 use super::group::group;
 use super::sharing::{Scanner, Uploads};
 use super::social::{Buddies, Lookup};
@@ -89,6 +90,7 @@ struct Worker {
     lookup: Lookup,
     away: bool,
     wishlist: Wishlist,
+    discover: Discover,
 }
 
 impl Worker {
@@ -122,6 +124,7 @@ impl Worker {
             lookup: Lookup::default(),
             away: false,
             wishlist: Wishlist::default(),
+            discover: Discover::default(),
         }
     }
 
@@ -158,8 +161,11 @@ impl Worker {
                 shares,
                 upload_slots,
                 buddies,
+                likes,
+                dislikes,
             } => {
                 self.buddies.set(buddies);
+                self.discover.set_interests(likes, dislikes);
                 self.download_dir = download_dir;
                 self.shares = shares;
                 self.upload_slots = upload_slots;
@@ -271,6 +277,20 @@ impl Worker {
                     let _ = client.set_away(away);
                 }
             }
+            Command::Discover => {
+                if let Some(client) = &self.client {
+                    self.discover.refresh(client);
+                }
+            }
+            Command::DiscoverItem(item) => {
+                if let Some(client) = &self.client {
+                    self.discover.open_item(client, item);
+                }
+            }
+            Command::SetInterest { item, like, add } => {
+                self.discover
+                    .set_interest(self.client.as_deref(), item, like, add);
+            }
             Command::RoomList => {
                 if let Some(client) = &self.client {
                     let _ = client.request_room_list();
@@ -372,6 +392,8 @@ impl Worker {
                 client.set_upload_slots(self.upload_slots);
                 let _ = client.request_room_list();
                 self.buddies.watch_all(&client);
+                self.discover.announce(&client);
+                self.discover.refresh(&client);
                 self.away = false;
                 self.client = Some(Arc::new(client));
                 self.pinged = Instant::now();
@@ -625,6 +647,9 @@ impl Worker {
         self.poll_browses(&client);
         if let Some(cards) = self.buddies.poll(&client) {
             self.emit(Event::Buddies(cards));
+        }
+        if let Some(discovery) = self.discover.poll(&client) {
+            self.emit(Event::Discovery(discovery));
         }
         if let Some(card) = self.lookup.poll(&client) {
             self.emit(Event::Card(card));

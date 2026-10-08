@@ -15,11 +15,12 @@ pub enum Page {
     Rooms,
     Messages,
     Users,
+    Discover,
     Settings,
 }
 
 impl Page {
-    pub const MAIN: [Page; 7] = [
+    pub const MAIN: [Page; 8] = [
         Page::Search,
         Page::Transfers,
         Page::Uploads,
@@ -27,6 +28,7 @@ impl Page {
         Page::Rooms,
         Page::Messages,
         Page::Users,
+        Page::Discover,
     ];
 
     pub fn label(self) -> &'static str {
@@ -38,6 +40,7 @@ impl Page {
             Page::Rooms => "rooms",
             Page::Messages => "messages",
             Page::Users => "users",
+            Page::Discover => "discover",
             Page::Settings => "settings",
         }
     }
@@ -51,6 +54,7 @@ impl Page {
             Page::Rooms => IconName::Hash,
             Page::Messages => IconName::MessagesSquare,
             Page::Users => IconName::Users,
+            Page::Discover => IconName::Compass,
             Page::Settings => IconName::Settings,
         }
     }

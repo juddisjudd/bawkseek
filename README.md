@@ -2,7 +2,7 @@
 
 A Soulseek desktop client for Windows, built in Rust with [GPUI Kit](https://gpui-kit.com). It looks and feels like [bawkterm](https://bawkterm.com).
 
-> Status: early. Search, downloads, sharing, browsing, messages, chat rooms, buddies and the wishlist work. Recommendations come next.
+> Status: early. Search, downloads, sharing, browsing, messages, chat rooms, buddies, the wishlist and recommendations work. Network and settings polish come next.
 
 ## What works
 
@@ -13,6 +13,7 @@ A Soulseek desktop client for Windows, built in Rust with [GPUI Kit](https://gpu
 - **Messages**: private conversations with any user, even offline ones. Unread counts in the sidebar, a toast for new messages, and logs saved on this computer per account (`%APPDATA%\bawkseek\messages`).
 - **Rooms**: the public room list, sorted by size and filterable. Join several rooms at once, each in its own tab with members, tickers and unread counts. Set your own ticker, create private rooms, and rejoin automatically after a reconnect.
 - **Users**: look anyone up for their status, shares, speed, upload slots and queue. Keep buddies with live online, away and offline status. Ignore a user to hide their messages and room lines (the network gives no way to refuse their downloads). Set yourself away from settings.
+- **Discover**: list what you like and dislike, then get recommendations, globally popular items and people with similar taste. Open any item to see related items and who likes it; search for it or add it to your likes in one click.
 - **User menu**: right-click any username to browse their shares, send a message, see their info, add or remove them as a buddy, or ignore them.
 - **Transfers**: progress, speed and queue place per file, grouped by folder. Pause, resume, retry, cancel, open the folder.
 - **Sharing**: share any number of folders from the uploads page. They are scanned in the background after login, so a big library never delays it. Other users see each folder by its name: `D:\Music` appears as `Music`. A folder inside one you already share is refused. Everything in a shared folder is shared, hidden files included.
@@ -20,7 +21,7 @@ A Soulseek desktop client for Windows, built in Rust with [GPUI Kit](https://gpu
 - **Reconnects**: a dropped server connection reconnects by itself. Queued downloads resume when their peer is back.
 - **Settings**: download folder, listening port, dark or light theme.
 
-Not built yet: interests and recommendations, UPnP port mapping, an upload speed limit, banning users.
+Not built yet: UPnP port mapping, an upload speed limit, banning users.
 
 ## Build
 

@@ -13,6 +13,7 @@ icon_assets!(
         CircleCheck,
         CircleX,
         Clock,
+        Compass,
         Download,
         ExternalLink,
         FileMusic,

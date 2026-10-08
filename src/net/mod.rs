@@ -1,4 +1,5 @@
 mod browse;
+mod discover;
 mod group;
 mod rooms;
 mod sharing;
@@ -16,6 +17,7 @@ use gpui_kit::*;
 use crate::chats::Chats;
 
 pub use browse::{Listing, Node};
+pub use discover::Discovery;
 pub use group::{FileHit, FolderHit, SearchHits};
 pub use rooms::{RoomLine, Rooms};
 pub use sharing::{overlaps, virtual_roots};
@@ -153,6 +155,8 @@ pub enum Command {
         shares: Vec<PathBuf>,
         upload_slots: usize,
         buddies: Vec<String>,
+        likes: Vec<String>,
+        dislikes: Vec<String>,
     },
     Logout,
     Reconnect,
@@ -188,6 +192,13 @@ pub enum Command {
         text: String,
     },
     RoomList,
+    Discover,
+    DiscoverItem(String),
+    SetInterest {
+        item: String,
+        like: bool,
+        add: bool,
+    },
     Watch(String),
     Unwatch(String),
     LookUp(String),
@@ -242,6 +253,7 @@ pub enum Event {
         events: Vec<soulseek_rs::RoomEvent>,
     },
     Buddies(Vec<UserCard>),
+    Discovery(Discovery),
     Card(UserCard),
     Notice(NoticeLevel, String),
 }
@@ -289,6 +301,9 @@ pub struct Session {
     pub card: Option<UserCard>,
     pub ignored: std::collections::HashSet<String>,
     pub away: bool,
+    pub discovery: Discovery,
+    pub likes: Vec<String>,
+    pub dislikes: Vec<String>,
     _pump: Task<()>,
 }
 
@@ -326,6 +341,9 @@ impl Session {
             card: None,
             ignored: Default::default(),
             away: false,
+            discovery: Discovery::default(),
+            likes: Vec::new(),
+            dislikes: Vec::new(),
             _pump: pump,
         }
     }
@@ -426,6 +444,7 @@ impl Session {
                 }
                 self.buddies = cards;
             }
+            Event::Discovery(discovery) => self.discovery = discovery,
             Event::Card(card) => {
                 if self
                     .card
@@ -451,6 +470,7 @@ impl Session {
         self.buddies.clear();
         self.card = None;
         self.away = false;
+        self.discovery = Discovery::default();
     }
 
     pub fn send(&self, command: Command) {

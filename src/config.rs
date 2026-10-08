@@ -19,6 +19,8 @@ pub struct Config {
     pub upload_slots: usize,
     pub buddies: Vec<String>,
     pub ignored: Vec<String>,
+    pub likes: Vec<String>,
+    pub dislikes: Vec<String>,
 }
 
 impl Default for Config {
@@ -33,6 +35,8 @@ impl Default for Config {
             upload_slots: DEFAULT_UPLOAD_SLOTS,
             buddies: Vec::new(),
             ignored: Vec::new(),
+            likes: Vec::new(),
+            dislikes: Vec::new(),
         }
     }
 }

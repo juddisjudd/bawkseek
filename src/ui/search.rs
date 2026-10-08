@@ -122,12 +122,15 @@ impl SearchView {
 
     fn run(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let text = self.query.read(cx).value().trim().to_string();
-        if text.is_empty() {
-            return;
+        if !text.is_empty() {
+            self.open(&text, cx);
         }
+    }
+
+    pub fn open(&mut self, query: &str, cx: &mut Context<Self>) {
         let ix = self
             .session
-            .update(cx, |session, cx| session.search(&text, cx));
+            .update(cx, |session, cx| session.search(query, cx));
         self.select(ix, cx);
     }
 

@@ -75,7 +75,9 @@ impl Wishlist {
     /// How many of `results` are new since the last call, remembering them; the first call only sets a baseline.
     pub fn fresh(&mut self, query: &str, results: &[SearchResult]) -> usize {
         let Some(seen) = self.seen.get_mut(query) else {
-            self.seen.insert(query.to_string(), keys(results));
+            if !results.is_empty() {
+                self.seen.insert(query.to_string(), keys(results));
+            }
             return 0;
         };
         let mut fresh = 0;
@@ -156,6 +158,7 @@ mod tests {
     #[test]
     fn counts_only_new_results() {
         let mut wishlist = Wishlist::default();
+        assert_eq!(wishlist.fresh("q", &[]), 0);
         assert_eq!(wishlist.fresh("q", &[result("ann", &["1", "2"])]), 0);
         assert_eq!(wishlist.fresh("q", &[result("ann", &["2", "3"])]), 1);
         assert_eq!(wishlist.fresh("q", &[result("bob", &["2"])]), 1);
