@@ -7,6 +7,9 @@ license = "AGPL-3.0-only"
 description = "A Soulseek desktop client for Windows"
 publish = false
 
+[workspace]
+members = ["crates/slsk"]
+
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 dirs = "7.0.0"
