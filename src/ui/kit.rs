@@ -129,6 +129,35 @@ pub fn chip(
         .child(label.into())
 }
 
+pub fn format_chip(
+    id: impl Into<ElementId>,
+    ext: &str,
+    active: bool,
+    p: &Palette,
+) -> Stateful<Div> {
+    let color = p.format(ext);
+    div()
+        .id(id)
+        .h(px(26.))
+        .px(px(10.))
+        .flex()
+        .items_center()
+        .rounded(px(4.))
+        .border_1()
+        .text_size(px(12.))
+        .text_color(color)
+        .cursor_pointer()
+        .map(|this| {
+            if active {
+                this.border_color(color).bg(color.opacity(0.14))
+            } else {
+                this.border_color(p.border_weak)
+                    .hover(|style| style.bg(p.bg_weak))
+            }
+        })
+        .child(format!(".{ext}"))
+}
+
 pub fn empty_state(icon: IconName, title: &str, body: &str, p: &Palette) -> Div {
     div()
         .flex_1()

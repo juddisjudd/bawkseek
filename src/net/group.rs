@@ -13,6 +13,14 @@ const ATTR_BIT_DEPTH: u32 = 5;
 const LOSSLESS: [&str; 6] = ["flac", "wav", "alac", "ape", "aiff", "wv"];
 const LOSSY: [&str; 6] = ["mp3", "ogg", "opus", "m4a", "aac", "wma"];
 
+pub fn is_lossless(ext: &str) -> bool {
+    LOSSLESS.contains(&ext)
+}
+
+fn is_audio(ext: &str) -> bool {
+    is_lossless(ext) || LOSSY.contains(&ext)
+}
+
 #[derive(Clone, Debug)]
 pub struct FileHit {
     pub filename: String,
@@ -65,6 +73,8 @@ impl FolderHit {
 #[derive(Clone, Debug, Default)]
 pub struct SearchHits {
     pub folders: Vec<FolderHit>,
+    /// Audio formats in the results, most files first.
+    pub formats: Vec<(String, usize)>,
     pub files: usize,
     pub users: usize,
 }
@@ -74,6 +84,7 @@ pub fn group(results: &[SearchResult]) -> SearchHits {
     let mut folders: Vec<FolderHit> = Vec::new();
     let mut users = HashSet::new();
     let mut files = 0;
+    let mut formats: HashMap<String, usize> = HashMap::new();
 
     for result in results {
         users.insert(result.username.as_str());
@@ -107,6 +118,9 @@ pub fn group(results: &[SearchResult]) -> SearchHits {
                 sample_rate: attr(ATTR_SAMPLE_RATE),
                 bit_depth: attr(ATTR_BIT_DEPTH),
             };
+            if is_audio(&hit.ext) {
+                *formats.entry(hit.ext.clone()).or_default() += 1;
+            }
             let entry = &mut folders[ix];
             entry.size += hit.size;
             entry.files.push(hit);
@@ -118,8 +132,12 @@ pub fn group(results: &[SearchResult]) -> SearchHits {
         (folder.format, folder.quality) = summarize(&folder.files);
     }
 
+    let mut formats: Vec<(String, usize)> = formats.into_iter().collect();
+    formats.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+
     SearchHits {
         folders,
+        formats,
         files,
         users: users.len(),
     }
@@ -137,7 +155,7 @@ fn khz(rate: u32) -> String {
 fn summarize(files: &[FileHit]) -> (String, String) {
     let mut counts: HashMap<&str, usize> = HashMap::new();
     for file in files {
-        if LOSSLESS.contains(&file.ext.as_str()) || LOSSY.contains(&file.ext.as_str()) {
+        if is_audio(&file.ext) {
             *counts.entry(file.ext.as_str()).or_default() += 1;
         }
     }
@@ -150,7 +168,7 @@ fn summarize(files: &[FileHit]) -> (String, String) {
     };
     let audio: Vec<&FileHit> = files.iter().filter(|file| file.ext == *ext).collect();
 
-    let quality = if LOSSLESS.contains(ext) {
+    let quality = if is_lossless(ext) {
         let depth = uniform(audio.iter().map(|file| file.bit_depth));
         let rate = uniform(audio.iter().map(|file| file.sample_rate));
         match (depth, rate) {
@@ -248,6 +266,7 @@ mod tests {
         ]);
 
         assert_eq!(hits.files, 4);
+        assert_eq!(hits.formats, [("flac".into(), 2), ("mp3".into(), 2)]);
         assert_eq!(hits.users, 2);
         assert_eq!(hits.folders.len(), 3);
 

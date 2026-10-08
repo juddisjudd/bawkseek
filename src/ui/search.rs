@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{InputEvent, InputState};
+use gpui_kit::component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{Icon, Sizable, VirtualListScrollHandle, v_virtual_list};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -12,7 +13,9 @@ use gpui_kit::*;
 
 use super::{UserAction, kit};
 use crate::format;
-use crate::net::{Command, DlState, FolderHit, Scope, SearchHits, Session, Wanted, parse_scope};
+use crate::net::{
+    Command, DlState, Filter, FolderHit, Quality, Scope, SearchHits, Session, Wanted, parse_scope,
+};
 use crate::theme::{Palette, palette};
 
 const FOLDER_ROW: f32 = 52.;
@@ -40,6 +43,7 @@ enum Row {
     Folder {
         folder: usize,
         open: bool,
+        shown: usize,
     },
     File {
         folder: usize,
@@ -54,6 +58,8 @@ struct LayoutKey {
     query: SharedString,
     hits: usize,
     filter: String,
+    formats: Vec<String>,
+    quality: Quality,
     free_only: bool,
     sort: Sort,
     expanded: u64,
@@ -72,6 +78,8 @@ pub struct SearchView {
     query: Entity<InputState>,
     filter: Entity<InputState>,
     active: usize,
+    formats: Vec<String>,
+    quality: Quality,
     free_only: bool,
     sort: Sort,
     expanded: HashSet<(String, String)>,
@@ -88,7 +96,7 @@ impl SearchView {
                 .placeholder("artist, album or track · @user or #room to narrow")
         });
         let filter = cx.new(|cx| {
-            InputState::new(window, cx).placeholder("filter by user, folder, file or format")
+            InputState::new(window, cx).placeholder("filter · words, -word to skip, .flac, >=320")
         });
         let subscriptions = vec![
             cx.subscribe_in(&query, window, |this, _, event: &InputEvent, window, cx| {
@@ -108,6 +116,8 @@ impl SearchView {
             query,
             filter,
             active: 0,
+            formats: Vec::new(),
+            quality: Quality::Any,
             free_only: false,
             sort: Sort::Speed,
             expanded: HashSet::new(),
@@ -216,6 +226,8 @@ impl SearchView {
             query: tab.query.clone(),
             hits: Arc::as_ptr(&tab.hits) as usize,
             filter: filter.clone(),
+            formats: self.formats.clone(),
+            quality: self.quality,
             free_only: self.free_only,
             sort: self.sort,
             expanded: self.expanded_rev,
@@ -225,12 +237,18 @@ impl SearchView {
         }
 
         let hits = tab.hits.clone();
-        let terms: Vec<&str> = filter.split_whitespace().collect();
-        let mut visible: Vec<usize> = (0..hits.folders.len())
-            .filter(|ix| {
-                let folder = &hits.folders[*ix];
-                (!self.free_only || folder.free) && matches(folder, &terms)
+        let filter = Filter::new(&filter, &self.formats, self.quality);
+        let picks: Vec<Option<Vec<usize>>> = hits
+            .folders
+            .iter()
+            .map(|folder| {
+                (!self.free_only || folder.free)
+                    .then(|| filter.folder(folder))
+                    .flatten()
             })
+            .collect();
+        let mut visible: Vec<usize> = (0..hits.folders.len())
+            .filter(|ix| picks[*ix].is_some())
             .collect();
         sort(&mut visible, &hits.folders, self.sort);
 
@@ -240,16 +258,20 @@ impl SearchView {
                 rows.push(Row::Gap);
             }
             let folder = &hits.folders[ix];
+            let files = picks[ix].as_deref().unwrap_or_default();
             let open = self
                 .expanded
                 .contains(&(folder.username.clone(), folder.folder.clone()));
-            rows.push(Row::Folder { folder: ix, open });
+            rows.push(Row::Folder {
+                folder: ix,
+                open,
+                shown: files.len(),
+            });
             if open {
-                let count = folder.files.len();
-                rows.extend((0..count).map(|file| Row::File {
+                rows.extend(files.iter().enumerate().map(|(n, file)| Row::File {
                     folder: ix,
-                    file,
-                    last: file + 1 == count,
+                    file: *file,
+                    last: n + 1 == files.len(),
                 }));
             }
         }
@@ -287,10 +309,12 @@ impl SearchView {
             .filter_map(|ix| layout.rows.get(ix).copied())
             .map(|row| match row {
                 Row::Gap => div().h(px(GAP_ROW)).w_full().into_any_element(),
-                Row::Folder { folder, open } => {
-                    folder_row(&layout.hits.folders[folder], folder, open, &p, cx)
-                        .into_any_element()
-                }
+                Row::Folder {
+                    folder,
+                    open,
+                    shown,
+                } => folder_row(&layout.hits.folders[folder], folder, open, shown, &p, cx)
+                    .into_any_element(),
                 Row::File { folder, file, last } => {
                     let hit = &layout.hits.folders[folder];
                     let state = downloads
@@ -357,6 +381,62 @@ impl SearchView {
             }))
     }
 
+    fn toggle_format(&mut self, ext: &str, cx: &mut Context<Self>) {
+        if let Some(ix) = self.formats.iter().position(|picked| picked == ext) {
+            self.formats.remove(ix);
+        } else {
+            self.formats.push(ext.to_string());
+        }
+        cx.notify();
+    }
+
+    fn render_picks(&self, hits: &SearchHits, p: &Palette, cx: &mut Context<Self>) -> Div {
+        let mut shown: Vec<String> = hits
+            .formats
+            .iter()
+            .take(6)
+            .map(|(ext, _)| ext.clone())
+            .collect();
+        for ext in &self.formats {
+            if !shown.contains(ext) {
+                shown.push(ext.clone());
+            }
+        }
+        let view = cx.entity().downgrade();
+        let current = self.quality;
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .children(shown.into_iter().map(|ext| {
+                let active = self.formats.contains(&ext);
+                kit::format_chip(SharedString::from(format!("format-{ext}")), &ext, active, p)
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_format(&ext, cx)))
+            }))
+            .child(
+                kit::button("quality", cx)
+                    .h(px(26.))
+                    .label(current.label())
+                    .dropdown_caret(true)
+                    .when(current != Quality::Any, |this| this.border_color(p.yolk))
+                    .dropdown_menu(move |menu, _, _| {
+                        Quality::CHOICES.into_iter().fold(menu, |menu, choice| {
+                            let view = view.clone();
+                            menu.item(
+                                PopupMenuItem::new(choice.label())
+                                    .checked(choice == current)
+                                    .on_click(move |_, _, cx| {
+                                        let _ = view.update(cx, |this, cx| {
+                                            this.quality = choice;
+                                            cx.notify();
+                                        });
+                                    }),
+                            )
+                        })
+                    }),
+            )
+    }
+
     fn render_columns(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
         let column = |sort: Sort, label: &'static str, width: Option<f32>, right: bool| {
             let active = self.sort == sort;
@@ -401,29 +481,6 @@ impl SearchView {
     }
 }
 
-fn matches(folder: &FolderHit, terms: &[&str]) -> bool {
-    if terms.is_empty() {
-        return true;
-    }
-    let haystack =
-        format!("{} {} {}", folder.username, folder.folder, folder.summary()).to_lowercase();
-    terms.iter().all(|term| {
-        if let Some(excluded) = term.strip_prefix('-').filter(|rest| !rest.is_empty()) {
-            !haystack.contains(excluded)
-                && !folder
-                    .files
-                    .iter()
-                    .any(|file| file.name.to_lowercase().contains(excluded))
-        } else {
-            haystack.contains(term)
-                || folder
-                    .files
-                    .iter()
-                    .any(|file| file.name.to_lowercase().contains(term))
-        }
-    })
-}
-
 fn sort(visible: &mut [usize], folders: &[FolderHit], sort: Sort) {
     match sort {
         Sort::Speed => {
@@ -440,6 +497,7 @@ fn folder_row(
     hit: &FolderHit,
     ix: usize,
     open: bool,
+    shown: usize,
     p: &Palette,
     cx: &mut Context<SearchView>,
 ) -> impl IntoElement {
@@ -502,7 +560,15 @@ fn folder_row(
                 .flex()
                 .justify_end()
                 .text_color(p.text_weak)
-                .child(format::count(hit.files.len())),
+                .child(if shown == hit.files.len() {
+                    format::count(shown)
+                } else {
+                    format!(
+                        "{}/{}",
+                        format::count(shown),
+                        format::count(hit.files.len())
+                    )
+                }),
         )
         .child(
             div()
@@ -704,7 +770,7 @@ impl Render for SearchView {
                     let (title, body) = if layout.hits.files == 0 {
                         ("searching…", "peers answer over the next half minute.")
                     } else {
-                        ("nothing matches the filter", "clear the filter or turn off free slots.")
+                        ("nothing matches", "clear the filter, or loosen the format, quality or free slot picks.")
                     };
                     kit::empty_state(IconName::Search, title, body, &p).into_any_element()
                 } else {
@@ -745,7 +811,11 @@ impl Render for SearchView {
                                         .prefix(Icon::new(IconName::Search).small().text_color(p.text_weak)),
                                 ),
                             )
-                            .child(div().text_size(px(12.)).text_color(p.text_weak).child(stats))
+                            .child(div().text_size(px(12.)).text_color(p.text_weak).child(stats)),
+                    )
+                    .child(
+                        self.render_picks(&layout.hits, &p, cx)
+                            .child(div().flex_1())
                             .child(
                                 kit::chip("free-only", "free slots", self.free_only, &p).on_click(cx.listener(
                                     |this, _, _, cx| {

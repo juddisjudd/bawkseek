@@ -1,5 +1,6 @@
 mod browse;
 mod discover;
+mod filter;
 mod group;
 mod portmap;
 mod rooms;
@@ -20,6 +21,7 @@ use crate::chats::Chats;
 
 pub use browse::{Listing, Node};
 pub use discover::Discovery;
+pub use filter::{Filter, Quality};
 pub use group::{FileHit, FolderHit, SearchHits};
 pub use portmap::PortMap;
 pub use rooms::{RoomLine, Rooms};
