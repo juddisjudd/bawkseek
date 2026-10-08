@@ -7,12 +7,12 @@ use std::time::{Duration, Instant};
 
 use soulseek_rs::types::DownloadMetadata;
 use soulseek_rs::utils::logger::{self, LogLevel};
-use soulseek_rs::{Client, ClientSettings, DownloadStatus, SessionLoss, SoulseekRs};
+use soulseek_rs::{Client, ClientSettings, DownloadStatus, RoomEvent, SessionLoss, SoulseekRs};
 
 use super::browse::Listing;
 use super::group::group;
 use super::sharing::{Scanner, Uploads};
-use super::{Command, DlState, DownloadRow, Event, NoticeLevel, Status, Wanted};
+use super::{Command, DlState, DownloadRow, Event, NoticeLevel, Status, Wanted, unix_now};
 use crate::format;
 
 const TICK: Duration = Duration::from_millis(150);
@@ -82,6 +82,7 @@ struct Worker {
     scanner: Scanner,
     uploads: Uploads,
     browses: Vec<(String, Instant)>,
+    rooms: Vec<(String, bool)>,
 }
 
 impl Worker {
@@ -110,6 +111,7 @@ impl Worker {
             upload_slots: crate::config::DEFAULT_UPLOAD_SLOTS,
             uploads: Uploads::default(),
             browses: Vec::new(),
+            rooms: Vec::new(),
         }
     }
 
@@ -233,6 +235,44 @@ impl Worker {
                 }
             }
             Command::Browse(username) => self.browse(username),
+            Command::RoomList => {
+                if let Some(client) = &self.client {
+                    let _ = client.request_room_list();
+                }
+            }
+            Command::JoinRoom { room, private } => {
+                if let Some(client) = &self.client {
+                    let _ = if private {
+                        client.join_private_room(&room)
+                    } else {
+                        client.join_room(&room)
+                    };
+                }
+                if !self.rooms.iter().any(|(joined, _)| *joined == room) {
+                    self.rooms.push((room, private));
+                }
+            }
+            Command::LeaveRoom(room) => {
+                if let Some(client) = &self.client {
+                    let _ = client.leave_room(&room);
+                }
+                self.rooms.retain(|(joined, _)| *joined != room);
+            }
+            Command::Say { room, text } => {
+                if let Some(client) = &self.client
+                    && let Err(err) = client.say_in_room(&room, &text)
+                {
+                    self.notice(
+                        NoticeLevel::Warning,
+                        format!("could not post in {room}: {}", describe(&err)),
+                    );
+                }
+            }
+            Command::SetTicker { room, ticker } => {
+                if let Some(client) = &self.client {
+                    let _ = client.set_room_ticker(&room, &ticker);
+                }
+            }
             Command::SendMessage { username, text } => {
                 let result = match &self.client {
                     Some(client) => client.send_private_message(&username, &text),
@@ -294,6 +334,7 @@ impl Worker {
                     );
                 }
                 client.set_upload_slots(self.upload_slots);
+                let _ = client.request_room_list();
                 self.client = Some(Arc::new(client));
                 self.pinged = Instant::now();
                 self.rescan();
@@ -306,6 +347,19 @@ impl Worker {
     }
 
     /// Shares are scanned after login, so a slow disk never delays it, and again after a reconnect resets the server's counts.
+    /// The library forgets rooms and share counts across a re-login, so put them back.
+    fn restore_session(&self, client: &Client) {
+        self.requeue_peers(client);
+        self.rescan();
+        for (room, private) in &self.rooms {
+            let _ = if *private {
+                client.join_private_room(room)
+            } else {
+                client.join_room(room)
+            };
+        }
+    }
+
     fn rescan(&self) {
         if let Some(client) = &self.client {
             self.scanner.scan(client.clone(), &self.shares);
@@ -362,6 +416,7 @@ impl Worker {
         self.scanner.invalidate();
         self.uploads.reset();
         self.browses.clear();
+        self.rooms.clear();
         self.client = None;
     }
 
@@ -519,6 +574,18 @@ impl Worker {
         self.poll_folders(&client);
         self.poll_downloads(&client);
         self.poll_browses(&client);
+        let room_events = client.take_room_events();
+        if !room_events.is_empty() {
+            for event in &room_events {
+                if let RoomEvent::Left { room } = event {
+                    self.rooms.retain(|(joined, _)| joined != room);
+                }
+            }
+            self.emit(Event::Rooms {
+                at: unix_now(),
+                events: room_events,
+            });
+        }
         for message in client.take_private_messages() {
             self.emit(Event::Message {
                 username: message.username().to_string(),
@@ -564,8 +631,7 @@ impl Worker {
                 if matches!(client.login(), Ok(true)) {
                     self.reconnect = None;
                     self.emit(Event::Status(Status::Online));
-                    self.requeue_peers(&client);
-                    self.rescan();
+                    self.restore_session(&client);
                 } else {
                     let backoff =
                         Duration::from_secs(5 * 2u64.pow(attempt.min(4))).min(MAX_BACKOFF);
@@ -603,8 +669,7 @@ impl Worker {
                 self.displaced = false;
                 self.reconnect = None;
                 self.emit(Event::Status(Status::Online));
-                self.requeue_peers(&client);
-                self.rescan();
+                self.restore_session(&client);
             }
             Ok(false) => self.reconnect_failed("the server refused the login".into()),
             Err(err) => self.reconnect_failed(describe(&err)),

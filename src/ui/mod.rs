@@ -3,12 +3,12 @@ mod chrome;
 mod kit;
 mod login;
 mod messages;
+mod rooms;
 mod search;
 mod settings;
 mod transfers;
 mod uploads;
 
-use gpui_kit::assets::IconName;
 use gpui_kit::component::button::Button;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::{Sizable, Theme, ThemeMode, WindowExt};
@@ -23,6 +23,7 @@ use browse::BrowseView;
 use chrome::{Page, Presence};
 use login::{LoginRequest, LoginView};
 use messages::MessagesView;
+use rooms::RoomsView;
 use search::SearchView;
 use settings::{SettingsEvent, SettingsView};
 use transfers::TransfersView;
@@ -53,6 +54,7 @@ pub struct Workspace {
     uploads: Entity<UploadsView>,
     browse: Entity<BrowseView>,
     messages: Entity<MessagesView>,
+    rooms: Entity<RoomsView>,
     settings: Entity<SettingsView>,
     _subscriptions: Vec<Subscription>,
 }
@@ -80,6 +82,7 @@ impl Workspace {
         });
         let browse = cx.new(|cx| BrowseView::new(session.clone(), window, cx));
         let messages = cx.new(|cx| MessagesView::new(session.clone(), window, cx));
+        let rooms = cx.new(|cx| RoomsView::new(session.clone(), window, cx));
         let settings = cx.new(|cx| SettingsView::new(&config, window, cx));
 
         let subscriptions = vec![
@@ -97,6 +100,7 @@ impl Workspace {
             cx.subscribe_in(&transfers, window, Self::open_user),
             cx.subscribe_in(&uploads, window, Self::open_user),
             cx.subscribe_in(&messages, window, Self::open_user),
+            cx.subscribe_in(&rooms, window, Self::open_user),
             cx.subscribe_in(&session, window, |_, _, notice: &Notice, window, cx| {
                 let note = match notice.0 {
                     NoticeLevel::Info => Notification::info(notice.1.clone()),
@@ -119,6 +123,7 @@ impl Workspace {
             uploads,
             browse,
             messages,
+            rooms,
             settings,
             _subscriptions: subscriptions,
         };
@@ -302,6 +307,8 @@ impl Workspace {
         self.messages.update(cx, |messages, cx| {
             messages.set_visible(page == Page::Messages, cx)
         });
+        self.rooms
+            .update(cx, |rooms, cx| rooms.set_visible(page == Page::Rooms, cx));
         match page {
             Page::Search => self
                 .search
@@ -309,6 +316,7 @@ impl Workspace {
             Page::Browse => self
                 .browse
                 .update(cx, |browse, cx| browse.focus(window, cx)),
+            Page::Rooms => self.rooms.update(cx, |rooms, cx| rooms.focus(window, cx)),
             Page::Messages => self
                 .messages
                 .update(cx, |messages, cx| messages.focus(window, cx)),
@@ -359,23 +367,6 @@ impl Workspace {
     }
 }
 
-fn placeholder(page: Page, cx: &App) -> Div {
-    let p = palette(cx);
-    div()
-        .size_full()
-        .flex()
-        .flex_col()
-        .px(px(40.))
-        .pt(px(32.))
-        .child(kit::page_header(page.label(), "coming later", &p))
-        .child(kit::empty_state(
-            IconName::Hash,
-            "chat rooms are not built yet",
-            "public rooms will live here.",
-            &p,
-        ))
-}
-
 impl Render for Workspace {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
@@ -390,6 +381,7 @@ impl Render for Workspace {
             (Page::Transfers, session.active_downloads()),
             (Page::Uploads, session.active_uploads()),
             (Page::Messages, session.chats.unread()),
+            (Page::Rooms, session.rooms.unread()),
         ];
 
         let root = div()
@@ -423,7 +415,7 @@ impl Render for Workspace {
             Page::Browse => self.browse.clone().into_any_element(),
             Page::Messages => self.messages.clone().into_any_element(),
             Page::Settings => self.settings.clone().into_any_element(),
-            page => placeholder(page, cx).into_any_element(),
+            Page::Rooms => self.rooms.clone().into_any_element(),
         };
 
         root.child(

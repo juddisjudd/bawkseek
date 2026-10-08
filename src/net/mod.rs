@@ -1,5 +1,6 @@
 mod browse;
 mod group;
+mod rooms;
 mod sharing;
 mod worker;
 
@@ -14,6 +15,7 @@ use crate::chats::Chats;
 
 pub use browse::{Listing, Node};
 pub use group::{FileHit, FolderHit, SearchHits};
+pub use rooms::{RoomLine, Rooms};
 pub use sharing::{overlaps, virtual_roots};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -178,6 +180,20 @@ pub enum Command {
         username: String,
         text: String,
     },
+    RoomList,
+    JoinRoom {
+        room: String,
+        private: bool,
+    },
+    LeaveRoom(String),
+    Say {
+        room: String,
+        text: String,
+    },
+    SetTicker {
+        room: String,
+        ticker: String,
+    },
     DownloadTree {
         root: String,
         files: Vec<(Wanted, String)>,
@@ -209,6 +225,10 @@ pub enum Event {
         text: String,
         at: i64,
         new: bool,
+    },
+    Rooms {
+        at: i64,
+        events: Vec<soulseek_rs::RoomEvent>,
     },
     Notice(NoticeLevel, String),
 }
@@ -250,6 +270,7 @@ pub struct Session {
     pub browses: Vec<BrowseTab>,
     pub chats: Chats,
     pub viewing_chat: Option<String>,
+    pub rooms: Rooms,
     _pump: Task<()>,
 }
 
@@ -282,6 +303,7 @@ impl Session {
             browses: Vec::new(),
             chats: Chats::default(),
             viewing_chat: None,
+            rooms: Rooms::default(),
             _pump: pump,
         }
     }
@@ -348,6 +370,13 @@ impl Session {
                 self.chats.receive(&username, text, at, read);
                 self.chats.save();
             }
+            Event::Rooms { at, events } => {
+                for event in events {
+                    if let Some(problem) = self.rooms.apply(at, event) {
+                        cx.emit(Notice(NoticeLevel::Warning, problem.into()));
+                    }
+                }
+            }
             Event::Notice(level, text) => cx.emit(Notice(level, text.into())),
         }
     }
@@ -360,6 +389,7 @@ impl Session {
         self.browses.clear();
         self.chats = Chats::default();
         self.viewing_chat = None;
+        self.rooms = Rooms::default();
     }
 
     pub fn send(&self, command: Command) {
@@ -462,6 +492,16 @@ impl Session {
             cx.notify();
         }
         self.viewing_chat = username;
+    }
+
+    /// Tells the session which room is on screen, so its lines arrive already read.
+    pub fn view_room(&mut self, room: Option<String>, cx: &mut Context<Self>) {
+        if let Some(room) = &room
+            && self.rooms.mark_read(room)
+        {
+            cx.notify();
+        }
+        self.rooms.viewing = room;
     }
 
     pub fn active_uploads(&self) -> usize {
