@@ -2,7 +2,7 @@
 
 A Soulseek desktop client for Windows, built in Rust with [GPUI Kit](https://gpui-kit.com). It looks and feels like [bawkterm](https://bawkterm.com).
 
-> Status: early. Search and downloads work. Sharing, browsing, chat and messages come later.
+> Status: early. Search, downloads and sharing work. Browsing, chat and messages come later.
 
 ## What works
 
@@ -10,10 +10,12 @@ A Soulseek desktop client for Windows, built in Rust with [GPUI Kit](https://gpu
 - **Search**: results arrive live and group by folder, with the format and quality of each folder (flac 24/96, mp3 320). Sort by speed, folder, user, file count or size. Filter by text (`-word` excludes), or show free slots only. Each search stays open in its own tab.
 - **Download**: a single file, or a whole folder. A folder download asks the user for the complete folder listing and keeps subfolders such as `CD1` or `Scans`.
 - **Transfers**: progress, speed and queue place per file, grouped by folder. Pause, resume, retry, cancel, open the folder.
+- **Sharing**: share any number of folders from the uploads page. They are scanned in the background after login, so a big library never delays it. Other users see each folder by its name: `D:\Music` appears as `Music`. A folder inside one you already share is refused. Everything in a shared folder is shared, hidden files included.
+- **Uploads**: who downloads from you, with progress, speed and queue place. Cancel a running upload, clear finished ones, and set how many people can download at once (upload slots, 1 to 50, default 10).
 - **Reconnects**: a dropped server connection reconnects by itself. Queued downloads resume when their peer is back.
 - **Settings**: download folder, listening port, dark or light theme.
 
-Not built yet: sharing and uploads, browsing a user's files, chat rooms, private messages, wishlist, UPnP port mapping.
+Not built yet: browsing a user's files, chat rooms, private messages, wishlist, UPnP port mapping, an upload speed limit, banning users.
 
 ## Build
 
@@ -37,7 +39,7 @@ The first build compiles GPUI and takes a few minutes.
 
 | What | Where |
 | --- | --- |
-| Settings | `%APPDATA%\bawkseek\config.json` |
+| Settings and shared folders | `%APPDATA%\bawkseek\config.json` |
 | Saved password | Windows Credential Manager, service `bawkseek` |
 | Downloads | `Downloads\bawkseek`, one folder per album (change it under settings) |
 
@@ -45,7 +47,7 @@ The first build compiles GPUI and takes a few minutes.
 
 bawkseek listens on port 2234 for other users. When that port is busy, it picks a free one and tells you. Windows asks once whether to allow it through the firewall.
 
-There is no UPnP yet. If your router does not forward the port, most transfers still work, because peers fall back to connecting through the server. Forwarding the port makes them faster to start.
+Forward TCP port 2234 on your router to this PC. There is no UPnP yet, so bawkseek cannot open the port for you. Without the forward, downloads from reachable users still work. But a user who cannot be reached either gets none of your search results and cannot download from you.
 
 To see the protocol traffic, set two environment variables before you start it:
 
@@ -60,7 +62,7 @@ $env:LOG_LEVEL = "DEBUG"; $env:LOG_FILE = "$env:TEMP\bawkseek.log"; cargo run
 - [IBM Plex Mono](https://github.com/IBM/plex) (SIL Open Font License, `assets/fonts/OFL.txt`) is the typeface.
 - [Lucide](https://lucide.dev) (ISC) icons.
 
-Please share back what you download, once sharing lands here or with another client.
+Please share back what you download.
 
 ## License
 

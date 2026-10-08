@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 const KEYRING_SERVICE: &str = "bawkseek";
 pub const DEFAULT_LISTEN_PORT: u16 = 2234;
+pub const DEFAULT_UPLOAD_SLOTS: usize = 10;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
@@ -14,6 +15,8 @@ pub struct Config {
     pub download_dir: PathBuf,
     pub listen_port: u16,
     pub light_theme: bool,
+    pub shared_dirs: Vec<PathBuf>,
+    pub upload_slots: usize,
 }
 
 impl Default for Config {
@@ -24,6 +27,8 @@ impl Default for Config {
             download_dir: default_download_dir(),
             listen_port: DEFAULT_LISTEN_PORT,
             light_theme: false,
+            shared_dirs: Vec::new(),
+            upload_slots: DEFAULT_UPLOAD_SLOTS,
         }
     }
 }

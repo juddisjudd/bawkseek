@@ -10,6 +10,7 @@ use soulseek_rs::utils::logger::{self, LogLevel};
 use soulseek_rs::{Client, ClientSettings, DownloadStatus, SessionLoss, SoulseekRs};
 
 use super::group::group;
+use super::sharing::{Scanner, Uploads};
 use super::{Command, DlState, DownloadRow, Event, NoticeLevel, Status, Wanted};
 use crate::format;
 
@@ -74,6 +75,10 @@ struct Worker {
     pinged: Instant,
     reconnect: Option<Reconnect>,
     displaced: bool,
+    shares: Vec<PathBuf>,
+    upload_slots: usize,
+    scanner: Scanner,
+    uploads: Uploads,
 }
 
 impl Worker {
@@ -84,6 +89,7 @@ impl Worker {
         }
         let now = Instant::now();
         Self {
+            scanner: Scanner::spawn(events.clone()),
             events,
             client: None,
             download_dir: PathBuf::new(),
@@ -97,6 +103,9 @@ impl Worker {
             pinged: now,
             reconnect: None,
             displaced: false,
+            shares: Vec::new(),
+            upload_slots: crate::config::DEFAULT_UPLOAD_SLOTS,
+            uploads: Uploads::default(),
         }
     }
 
@@ -130,8 +139,12 @@ impl Worker {
                 password,
                 listen_port,
                 download_dir,
+                shares,
+                upload_slots,
             } => {
                 self.download_dir = download_dir;
+                self.shares = shares;
+                self.upload_slots = upload_slots;
                 self.login(Credentials {
                     username,
                     password,
@@ -199,6 +212,27 @@ impl Worker {
                 self.rows_dirty = true;
             }
             Command::SetDownloadDir(dir) => self.download_dir = dir,
+            Command::SetShares(dirs) => {
+                self.shares = dirs;
+                self.rescan();
+            }
+            Command::Rescan => self.rescan(),
+            Command::SetUploadSlots(slots) => {
+                self.upload_slots = slots;
+                if let Some(client) = &self.client {
+                    client.set_upload_slots(slots);
+                }
+            }
+            Command::CancelUpload { username, filename } => {
+                if let Some(client) = &self.client {
+                    let _ = client.cancel_upload(&username, &filename);
+                }
+            }
+            Command::ClearUploads => {
+                if let Some(client) = &self.client {
+                    self.uploads.clear_finished(client);
+                }
+            }
         }
     }
 
@@ -214,7 +248,7 @@ impl Worker {
 
     fn login(&mut self, credentials: Credentials) {
         self.emit(Event::Status(Status::Connecting));
-        self.client = None;
+        self.drop_client();
         self.reconnect = None;
         self.displaced = false;
 
@@ -241,8 +275,10 @@ impl Worker {
                         ),
                     );
                 }
+                client.set_upload_slots(self.upload_slots);
                 self.client = Some(Arc::new(client));
                 self.pinged = Instant::now();
+                self.rescan();
             }
             Ok(false) => self.emit(Event::Status(Status::Failed(
                 "the server refused the login".into(),
@@ -251,8 +287,21 @@ impl Worker {
         }
     }
 
-    fn logout(&mut self) {
+    /// Shares are scanned after login, so a slow disk never delays it, and again after a reconnect resets the server's counts.
+    fn rescan(&self) {
+        if let Some(client) = &self.client {
+            self.scanner.scan(client.clone(), &self.shares);
+        }
+    }
+
+    fn drop_client(&mut self) {
+        self.scanner.invalidate();
+        self.uploads.reset();
         self.client = None;
+    }
+
+    fn logout(&mut self) {
+        self.drop_client();
         self.reconnect = None;
         self.searches.clear();
         self.folders.clear();
@@ -404,6 +453,9 @@ impl Worker {
         self.poll_searches(&client);
         self.poll_folders(&client);
         self.poll_downloads(&client);
+        if let Some(rows) = self.uploads.poll(&client) {
+            self.emit(Event::Uploads(rows));
+        }
     }
 
     fn watch_session(&mut self) {
@@ -439,6 +491,7 @@ impl Worker {
                     self.reconnect = None;
                     self.emit(Event::Status(Status::Online));
                     self.requeue_peers(&client);
+                    self.rescan();
                 } else {
                     let backoff =
                         Duration::from_secs(5 * 2u64.pow(attempt.min(4))).min(MAX_BACKOFF);
@@ -477,6 +530,7 @@ impl Worker {
                 self.reconnect = None;
                 self.emit(Event::Status(Status::Online));
                 self.requeue_peers(&client);
+                self.rescan();
             }
             Ok(false) => self.reconnect_failed("the server refused the login".into()),
             Err(err) => self.reconnect_failed(describe(&err)),

@@ -4,6 +4,7 @@ mod login;
 mod search;
 mod settings;
 mod transfers;
+mod uploads;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::Button;
@@ -21,6 +22,7 @@ use login::{LoginRequest, LoginView};
 use search::SearchView;
 use settings::{SettingsEvent, SettingsView};
 use transfers::TransfersView;
+use uploads::{UploadsEvent, UploadsView};
 
 struct PendingLogin {
     username: String,
@@ -37,6 +39,7 @@ pub struct Workspace {
     login: Entity<LoginView>,
     search: Entity<SearchView>,
     transfers: Entity<TransfersView>,
+    uploads: Entity<UploadsView>,
     settings: Entity<SettingsView>,
     _subscriptions: Vec<Subscription>,
 }
@@ -53,6 +56,15 @@ impl Workspace {
         let search = cx.new(|cx| SearchView::new(session.clone(), window, cx));
         let transfers =
             cx.new(|cx| TransfersView::new(session.clone(), config.download_dir.clone(), cx));
+        let uploads = cx.new(|cx| {
+            UploadsView::new(
+                session.clone(),
+                config.shared_dirs.clone(),
+                config.upload_slots,
+                window,
+                cx,
+            )
+        });
         let settings = cx.new(|cx| SettingsView::new(&config, window, cx));
 
         let subscriptions = vec![
@@ -65,6 +77,7 @@ impl Workspace {
                 );
             }),
             cx.subscribe_in(&settings, window, Self::on_settings),
+            cx.subscribe_in(&uploads, window, Self::on_uploads),
             cx.subscribe_in(&session, window, |_, _, notice: &Notice, window, cx| {
                 let note = match notice.0 {
                     NoticeLevel::Info => Notification::info(notice.1.clone()),
@@ -84,6 +97,7 @@ impl Workspace {
             login,
             search,
             transfers,
+            uploads,
             settings,
             _subscriptions: subscriptions,
         };
@@ -112,10 +126,16 @@ impl Workspace {
             password: password.clone(),
             remember,
         });
-        let (port, dir) = (self.config.listen_port, self.config.download_dir.clone());
-        self.session.update(cx, |session, cx| {
-            session.login(username, password, port, dir, cx)
-        });
+        let command = Command::Login {
+            username,
+            password,
+            listen_port: self.config.listen_port,
+            download_dir: self.config.download_dir.clone(),
+            shares: self.config.shared_dirs.clone(),
+            upload_slots: self.config.upload_slots,
+        };
+        self.session
+            .update(cx, |session, cx| session.login(command, cx));
     }
 
     fn on_session(
@@ -205,6 +225,30 @@ impl Workspace {
         cx.notify();
     }
 
+    fn on_uploads(
+        &mut self,
+        _: &Entity<UploadsView>,
+        event: &UploadsEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let session = self.session.read(cx);
+        match event {
+            UploadsEvent::Shares(shares) => {
+                self.config.shared_dirs = shares.clone();
+                session.send(Command::SetShares(shares.clone()));
+            }
+            UploadsEvent::Slots(slots) => {
+                if *slots == self.config.upload_slots {
+                    return;
+                }
+                self.config.upload_slots = *slots;
+                session.send(Command::SetUploadSlots(*slots));
+            }
+        }
+        self.save();
+    }
+
     fn save(&self) {
         if let Err(err) = self.config.save() {
             eprintln!("could not save settings: {err}");
@@ -265,11 +309,6 @@ impl Workspace {
 fn placeholder(page: Page, cx: &App) -> Div {
     let p = palette(cx);
     let (icon, title, body) = match page {
-        Page::Uploads => (
-            IconName::Upload,
-            "sharing is not built yet",
-            "bawkseek only downloads for now. shared folders and uploads come next. until then, please share back from another client.",
-        ),
         Page::Browse => (
             IconName::FolderSearch,
             "browsing is not built yet",
@@ -308,6 +347,7 @@ impl Render for Workspace {
         let counts = [
             (Page::Search, session.searches.len()),
             (Page::Transfers, session.active_downloads()),
+            (Page::Uploads, session.active_uploads()),
         ];
 
         let root = div()
@@ -337,6 +377,7 @@ impl Render for Workspace {
         let content = match self.page {
             Page::Search => self.search.clone().into_any_element(),
             Page::Transfers => self.transfers.clone().into_any_element(),
+            Page::Uploads => self.uploads.clone().into_any_element(),
             Page::Settings => self.settings.clone().into_any_element(),
             page => placeholder(page, cx).into_any_element(),
         };

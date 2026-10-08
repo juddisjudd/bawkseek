@@ -127,3 +127,12 @@ pub fn truncate(text: impl Into<SharedString>) -> Div {
         .text_ellipsis()
         .child(text.into())
 }
+
+/// One row of a bordered group: the first row draws the top edge, the last the bottom.
+pub fn box_edges(this: Stateful<Div>, top: bool, bottom: bool, p: &Palette) -> Stateful<Div> {
+    this.border_color(p.border_weak)
+        .border_l_1()
+        .border_r_1()
+        .when(top, |this| this.border_t_1().rounded_t(px(6.)))
+        .when(bottom, |this| this.border_b_1().rounded_b(px(6.)))
+}

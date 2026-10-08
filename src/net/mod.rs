@@ -1,4 +1,5 @@
 mod group;
+mod sharing;
 mod worker;
 
 use std::path::PathBuf;
@@ -9,6 +10,7 @@ use std::time::Duration;
 use gpui_kit::*;
 
 pub use group::{FileHit, FolderHit, SearchHits};
+pub use sharing::{overlaps, virtual_roots};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Status {
@@ -84,6 +86,43 @@ impl DlState {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum UlState {
+    Queued { place: u32 },
+    Active { speed: u64 },
+    Completed,
+    Cancelled,
+    Failed(String),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct UploadRow {
+    pub id: u64,
+    pub username: String,
+    pub filename: String,
+    pub name: String,
+    pub folder: String,
+    pub size: u64,
+    pub sent: u64,
+    pub state: UlState,
+}
+
+impl UploadRow {
+    pub fn progress(&self) -> f32 {
+        match self.state {
+            UlState::Completed => 1.0,
+            _ => (self.sent as f32 / self.size.max(1) as f32).clamp(0.0, 1.0),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ShareState {
+    pub scanning: bool,
+    pub folders: u32,
+    pub files: u32,
+}
+
 #[derive(Clone, Debug)]
 pub struct DownloadRow {
     pub id: u64,
@@ -102,6 +141,8 @@ pub enum Command {
         password: String,
         listen_port: u16,
         download_dir: PathBuf,
+        shares: Vec<PathBuf>,
+        upload_slots: usize,
     },
     Logout,
     Reconnect,
@@ -120,6 +161,14 @@ pub enum Command {
     Remove(u64),
     ClearFinished,
     SetDownloadDir(PathBuf),
+    SetShares(Vec<PathBuf>),
+    Rescan,
+    SetUploadSlots(usize),
+    CancelUpload {
+        username: String,
+        filename: String,
+    },
+    ClearUploads,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,6 +185,8 @@ pub enum Event {
         hits: Arc<SearchHits>,
     },
     Downloads(Arc<Vec<DownloadRow>>),
+    Uploads(Arc<Vec<UploadRow>>),
+    Shares(ShareState),
     Notice(NoticeLevel, String),
 }
 
@@ -154,6 +205,8 @@ pub struct Session {
     pub username: SharedString,
     pub searches: Vec<SearchTab>,
     pub downloads: Arc<Vec<DownloadRow>>,
+    pub uploads: Arc<Vec<UploadRow>>,
+    pub shares: ShareState,
     _pump: Task<()>,
 }
 
@@ -181,6 +234,8 @@ impl Session {
             username: SharedString::default(),
             searches: Vec::new(),
             downloads: Arc::default(),
+            uploads: Arc::default(),
+            shares: ShareState::default(),
             _pump: pump,
         }
     }
@@ -207,8 +262,7 @@ impl Session {
         match event {
             Event::Status(status) => {
                 if status == Status::Offline {
-                    self.searches.clear();
-                    self.downloads = Arc::default();
+                    self.clear();
                 }
                 self.status = status;
             }
@@ -219,37 +273,33 @@ impl Session {
                 }
             }
             Event::Downloads(rows) => self.downloads = rows,
+            Event::Uploads(rows) => self.uploads = rows,
+            Event::Shares(shares) => self.shares = shares,
             Event::Notice(level, text) => cx.emit(Notice(level, text.into())),
         }
+    }
+
+    fn clear(&mut self) {
+        self.searches.clear();
+        self.downloads = Arc::default();
+        self.uploads = Arc::default();
+        self.shares = ShareState::default();
     }
 
     pub fn send(&self, command: Command) {
         let _ = self.commands.send(command);
     }
 
-    pub fn login(
-        &mut self,
-        username: String,
-        password: String,
-        listen_port: u16,
-        download_dir: PathBuf,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn login(&mut self, command: Command, cx: &mut Context<Self>) {
         self.status = Status::Connecting;
-        self.send(Command::Login {
-            username,
-            password,
-            listen_port,
-            download_dir,
-        });
+        self.send(command);
         cx.notify();
     }
 
     pub fn logout(&mut self, cx: &mut Context<Self>) {
         self.send(Command::Logout);
         self.status = Status::Offline;
-        self.searches.clear();
-        self.downloads = Arc::default();
+        self.clear();
         cx.notify();
     }
 
@@ -277,6 +327,13 @@ impl Session {
             self.send(Command::ForgetSearch(tab.query.to_string()));
             cx.notify();
         }
+    }
+
+    pub fn active_uploads(&self) -> usize {
+        self.uploads
+            .iter()
+            .filter(|row| matches!(row.state, UlState::Active { .. }))
+            .count()
     }
 
     pub fn active_downloads(&self) -> usize {

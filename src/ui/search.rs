@@ -415,14 +415,6 @@ fn sort(visible: &mut [usize], folders: &[FolderHit], sort: Sort) {
     }
 }
 
-fn box_edges(this: Stateful<Div>, top: bool, bottom: bool, p: &Palette) -> Stateful<Div> {
-    this.border_color(p.border_weak)
-        .border_l_1()
-        .border_r_1()
-        .when(top, |this| this.border_t_1().rounded_t(px(6.)))
-        .when(bottom, |this| this.border_b_1().rounded_b(px(6.)))
-}
-
 fn folder_row(
     hit: &FolderHit,
     ix: usize,
@@ -443,7 +435,7 @@ fn folder_row(
         .bg(if open { p.bg_weak } else { p.bg })
         .hover(|style| style.bg(p.bg_weak))
         .on_click(cx.listener(move |this, _, _, cx| this.toggle(key.clone(), cx)));
-    box_edges(row, true, !open, p)
+    kit::box_edges(row, true, !open, p)
         .child(
             Icon::new(if open {
                 IconName::ChevronDown
@@ -566,7 +558,7 @@ fn file_row(
         .pr(px(14.))
         .bg(p.bg_weak)
         .hover(|style| style.bg(p.bg_hover));
-    box_edges(row, false, last, p)
+    kit::box_edges(row, false, last, p)
         .child(
             Icon::new(if is_audio(&entry.ext) {
                 IconName::FileMusic
