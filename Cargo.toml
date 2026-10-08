@@ -1,0 +1,36 @@
+[package]
+name = "bawkseek"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+license = "AGPL-3.0-only"
+description = "A Soulseek desktop client for Windows"
+publish = false
+
+[dependencies]
+dirs = "7.0.0"
+gpui-kit = "0.7.1"
+keyring = { version = "3", features = ["windows-native"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+soulseek-rs-lib = "19.1.0"
+
+[profile.dev.package]
+gpui-pre = { opt-level = 3 }
+gpui-component = { opt-level = 3 }
+gpui-kit = { opt-level = 3 }
+gpui-kit-assets = { opt-level = 3 }
+gpui-pre-macros = { opt-level = 3 }
+gpui-pre-platform = { opt-level = 3 }
+rustybuzz = { opt-level = 3 }
+taffy = { opt-level = 3 }
+ttf-parser = { opt-level = 3 }
+soulseek-rs-lib = { opt-level = 3 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[build-dependencies]
+winresource = "0.1.31"
