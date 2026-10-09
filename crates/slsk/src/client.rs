@@ -2,7 +2,7 @@ use std::io;
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 use tokio::runtime::Runtime;
@@ -12,6 +12,8 @@ use crate::engine::{Engine, Input};
 use crate::proto::peer::{SearchReply, SharedFileList, UserInfo};
 use crate::proto::server::{ServerRequest, ServerResponse};
 use crate::proto::types::Directory;
+use crate::transfers::TransferUpdate;
+use crate::uploads::DEFAULT_UPLOAD_SLOTS;
 
 /// Experimental clients use major version 177, per the protocol documentation.
 pub const MAJOR_VERSION: u32 = 177;
@@ -30,6 +32,7 @@ pub struct Config {
     /// Where scanned audio attributes are kept between runs, so a rescan only reads new or changed files.
     pub share_cache: Option<PathBuf>,
     pub accept_children: bool,
+    pub upload_slots: usize,
 }
 
 impl Config {
@@ -43,6 +46,7 @@ impl Config {
             shared_dirs: Vec::new(),
             share_cache: None,
             accept_children: true,
+            upload_slots: DEFAULT_UPLOAD_SLOTS,
         }
     }
 }
@@ -115,6 +119,8 @@ pub enum Event {
         dirs: usize,
         files: usize,
     },
+    Download(TransferUpdate),
+    Upload(TransferUpdate),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -153,6 +159,22 @@ pub(crate) enum Command {
     ForgetSearch(u32),
     SetShares(Vec<PathBuf>),
     Rescan,
+    Download {
+        id: u64,
+        username: String,
+        filename: String,
+        size: u64,
+        dest: PathBuf,
+    },
+    PauseDownload(u64),
+    ResumeDownload(u64),
+    CancelDownload(u64),
+    RemoveDownload(u64),
+    CancelUpload(u64),
+    SetUploadSlots(usize),
+    SetDownloadLimit(u64),
+    SetUploadLimit(u64),
+    SetBanned(Vec<String>),
 }
 
 /// A running Soulseek session: it connects, logs in, reconnects, and reports what happens as events.
@@ -160,6 +182,7 @@ pub struct Client {
     inputs: UnboundedSender<Input>,
     events: UnboundedReceiver<Event>,
     tokens: Arc<AtomicU32>,
+    ids: Arc<AtomicU64>,
     runtime: Option<Runtime>,
 }
 
@@ -173,12 +196,20 @@ impl Client {
         let (inputs, input_rx) = unbounded_channel();
         let (events_tx, events) = unbounded_channel();
         let tokens = Arc::new(AtomicU32::new(seed_token()));
-        let engine = Engine::new(config, events_tx, inputs.clone(), tokens.clone());
+        let ids = Arc::new(AtomicU64::new(1));
+        let engine = Engine::new(
+            config,
+            events_tx,
+            inputs.clone(),
+            tokens.clone(),
+            ids.clone(),
+        );
         runtime.spawn(engine.run(input_rx));
         Ok(Self {
             inputs,
             events,
             tokens,
+            ids,
             runtime: Some(runtime),
         })
     }
@@ -259,6 +290,60 @@ impl Client {
 
     pub fn rescan(&self) {
         self.command(Command::Rescan);
+    }
+
+    /// Queues a file from `username`; `dest` is the full path to save it at. Updates carry the returned id.
+    pub fn download(&self, username: &str, filename: &str, size: u64, dest: PathBuf) -> u64 {
+        let id = self.ids.fetch_add(1, Ordering::Relaxed);
+        self.command(Command::Download {
+            id,
+            username: username.to_string(),
+            filename: filename.to_string(),
+            size,
+            dest,
+        });
+        id
+    }
+
+    pub fn pause_download(&self, id: u64) {
+        self.command(Command::PauseDownload(id));
+    }
+
+    /// Resumes a paused download, or retries a failed or cancelled one.
+    pub fn resume_download(&self, id: u64) {
+        self.command(Command::ResumeDownload(id));
+    }
+
+    pub fn cancel_download(&self, id: u64) {
+        self.command(Command::CancelDownload(id));
+    }
+
+    /// Cancels the download if it is running and forgets it.
+    pub fn remove_download(&self, id: u64) {
+        self.command(Command::RemoveDownload(id));
+    }
+
+    pub fn cancel_upload(&self, id: u64) {
+        self.command(Command::CancelUpload(id));
+    }
+
+    pub fn set_upload_slots(&self, slots: usize) {
+        self.command(Command::SetUploadSlots(slots));
+    }
+
+    /// Bytes per second for all downloads together; 0 means no limit.
+    pub fn set_download_limit(&self, bytes_per_second: u64) {
+        self.command(Command::SetDownloadLimit(bytes_per_second));
+    }
+
+    /// Bytes per second for all uploads together; 0 means no limit.
+    pub fn set_upload_limit(&self, bytes_per_second: u64) {
+        self.command(Command::SetUploadLimit(bytes_per_second));
+    }
+
+    /// Users who may not download from us.
+    pub fn set_banned(&self, usernames: Vec<String>) {
+        self.command(Command::SetBanned(usernames));
     }
 
     pub fn disconnect(&self) {

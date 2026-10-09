@@ -21,6 +21,10 @@ fn main() {
         .unwrap_or(15);
     let peer = env("SLSK_PEER");
     let query = env("SLSK_SEARCH");
+    let get = env("SLSK_GET");
+    let dest_dir = env("SLSK_DEST")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
     let mut client = Client::start(config).expect("start runtime");
     let until = Instant::now() + Duration::from_secs(seconds);
     let (mut replies, mut files) = (0, 0);
@@ -34,6 +38,17 @@ fn main() {
                 if let Some(peer) = &peer {
                     client.user_info(peer);
                     client.browse(peer);
+                }
+                if let Some(get) = &get {
+                    let mut parts = get.split('|');
+                    let (user, file, size) = (
+                        parts.next().unwrap(),
+                        parts.next().unwrap(),
+                        parts.next().unwrap().parse().unwrap(),
+                    );
+                    let name = file.rsplit('\\').next().unwrap();
+                    let id = client.download(user, file, size, dest_dir.join(name));
+                    println!("downloading {file} as {id}");
                 }
                 if let Some(query) = &query {
                     let token = client.search(SearchScope::Network, query);

@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU32;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 use tokio::net::TcpStream;
@@ -9,6 +10,7 @@ use tokio::time::{Instant, MissedTickBehavior, interval};
 
 use crate::client::{Command, Config, Event, MAJOR_VERSION, MINOR_VERSION, Profile, Session};
 use crate::distributed::Distributed;
+use crate::downloads::Downloads;
 use crate::io::{connect, read_frame, spawn_writer, split_u32};
 use crate::peers::{ConnId, Peers};
 use crate::proto::peer::PeerInit;
@@ -17,6 +19,7 @@ use crate::proto::types::{ConnectionType, UserStatus};
 use crate::requests::Waiting;
 use crate::search::Searches;
 use crate::shares::ShareIndex;
+use crate::uploads::Uploads;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 /// The server omits its login reply to banned users, so a silent server counts as a lost connection.
@@ -72,6 +75,24 @@ pub(crate) enum Input {
     },
     Scanned(Arc<ShareIndex>),
     BrowseFrame(Arc<Vec<u8>>),
+    DownloadProgress {
+        id: u64,
+        bytes: u64,
+        speed: u64,
+    },
+    DownloadFinished {
+        id: u64,
+        result: Result<PathBuf, String>,
+    },
+    UploadProgress {
+        id: u64,
+        bytes: u64,
+        speed: u64,
+    },
+    UploadFinished {
+        id: u64,
+        result: Result<u64, String>,
+    },
 }
 
 struct ServerLink {
@@ -85,7 +106,10 @@ pub(crate) struct Engine {
     pub(crate) events: UnboundedSender<Event>,
     pub(crate) inputs: UnboundedSender<Input>,
     pub(crate) tokens: Arc<AtomicU32>,
+    ids: Arc<AtomicU64>,
     pub(crate) peers: Peers,
+    pub(crate) downloads: Downloads,
+    pub(crate) uploads: Uploads,
     pub(crate) waiting: Waiting,
     pub(crate) profile: Profile,
     pub(crate) shares: Arc<ShareIndex>,
@@ -117,14 +141,20 @@ impl Engine {
         events: UnboundedSender<Event>,
         inputs: UnboundedSender<Input>,
         tokens: Arc<AtomicU32>,
+        ids: Arc<AtomicU64>,
     ) -> Self {
         let distributed = Distributed::new(config.accept_children);
+        let mut uploads = Uploads::default();
+        uploads.slots = config.upload_slots.max(1);
         Self {
             config,
             events,
             inputs,
             tokens,
+            ids,
             peers: Peers::default(),
+            downloads: Downloads::default(),
+            uploads,
             waiting: Waiting::default(),
             profile: Profile::default(),
             shares: Arc::new(ShareIndex::default()),
@@ -168,6 +198,10 @@ impl Engine {
                 _ = tick.tick() => self.on_tick(),
             }
         }
+    }
+
+    pub(crate) fn next_id(&self) -> u64 {
+        self.ids.fetch_add(1, Ordering::Relaxed)
     }
 
     pub(crate) fn emit(&self, event: Event) {
@@ -228,6 +262,12 @@ impl Engine {
             Input::PeerClosed { conn } => self.on_peer_closed(conn),
             Input::Scanned(index) => self.on_scanned(index),
             Input::BrowseFrame(frame) => self.on_browse_frame(frame),
+            Input::DownloadProgress { id, bytes, speed } => {
+                self.on_download_progress(id, bytes, speed)
+            }
+            Input::DownloadFinished { id, result } => self.on_download_finished(id, result),
+            Input::UploadProgress { id, bytes, speed } => self.on_upload_progress(id, bytes, speed),
+            Input::UploadFinished { id, result } => self.on_upload_finished(id, result),
         }
     }
 
@@ -262,6 +302,22 @@ impl Engine {
                 self.rescan();
             }
             Command::Rescan => self.rescan(),
+            Command::Download {
+                id,
+                username,
+                filename,
+                size,
+                dest,
+            } => self.add_download(id, username, filename, size, dest),
+            Command::PauseDownload(id) => self.pause_download(id),
+            Command::ResumeDownload(id) => self.resume_download(id),
+            Command::CancelDownload(id) => self.cancel_download(id),
+            Command::RemoveDownload(id) => self.remove_download(id),
+            Command::CancelUpload(id) => self.cancel_upload(id),
+            Command::SetUploadSlots(slots) => self.set_upload_slots(slots),
+            Command::SetDownloadLimit(rate) => self.downloads.limiter.set_rate(rate),
+            Command::SetUploadLimit(rate) => self.uploads.limiter.set_rate(rate),
+            Command::SetBanned(usernames) => self.uploads.banned = usernames.into_iter().collect(),
         }
     }
 
@@ -377,6 +433,8 @@ impl Engine {
     fn on_tick(&mut self) {
         self.tick_peers();
         self.tick_requests();
+        self.tick_downloads();
+        self.tick_uploads();
         if self.reconnect_at.is_some_and(|at| Instant::now() >= at) {
             self.connect_server();
             return;
@@ -456,6 +514,9 @@ impl Engine {
                     }
                     ServerResponse::LeaveRoom(room) => {
                         self.rooms.remove(room);
+                    }
+                    ServerResponse::PrivilegedUsers(users) => {
+                        self.uploads.privileged = users.iter().cloned().collect();
                     }
                     ServerResponse::ExcludedSearchPhrases(phrases) => {
                         self.excluded_phrases =
