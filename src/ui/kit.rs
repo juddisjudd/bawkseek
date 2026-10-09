@@ -99,6 +99,36 @@ pub fn toggle_icon_button(
         .tooltip(tooltip)
 }
 
+/// A row of options where one is picked, such as the theme mode; fill it with `segment`s.
+pub fn segmented(p: &Palette) -> Div {
+    div()
+        .flex()
+        .flex_none()
+        .p(px(2.))
+        .gap(px(2.))
+        .rounded(px(4.))
+        .border_1()
+        .border_color(p.border_weak)
+}
+
+pub fn segment(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    active: bool,
+    p: &Palette,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .px(px(12.))
+        .py(px(3.))
+        .rounded(px(3.))
+        .cursor_pointer()
+        .text_color(if active { p.text_strong } else { p.text_weak })
+        .when(active, |this| this.bg(p.bg_hover))
+        .hover(|style| style.text_color(p.text_strong))
+        .child(label.into())
+}
+
 pub fn progress_bar(fraction: f32, color: Hsla, p: &Palette) -> Div {
     div()
         .h(px(3.))

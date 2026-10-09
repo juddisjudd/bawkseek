@@ -44,7 +44,7 @@ Your downloads go to `Downloads\bawkseek`, one folder per album. You can change 
 
 ### 5. Listen
 
-Open **library** to see your downloads and shared folders as albums with their covers. Click an album, then **play**. The player stays at the bottom while you browse, with shuffle, repeat, a seek bar and volume. Press **space** to play or pause.
+Open **library** to see your downloads and shared folders as albums with their covers. Sort them by **artist**, **album**, **recently added** or **folder**; artist and folder sorts group the albums under headings. Click an album, then **play**. The player stays at the bottom while you browse, with shuffle, repeat, a seek bar and volume. Press **space** to play or pause.
 
 ### 6. Stay up to date
 
@@ -60,7 +60,7 @@ bawkseek checks for a new version each time it starts. When one is out, you get 
 - **Rooms:** join public chat rooms, make private ones, or follow every room at once.
 - **Users:** look anyone up, keep a buddy list with online status, and ignore people. An ignored user's messages are hidden, and they can't download from you or browse your files.
 - **Discover:** add artists and genres you like and get recommendations and people with similar taste.
-- **Library and player** for MP3, FLAC, M4A/AAC, ALAC, OGG Vorbis, WAV and AIFF. Opus, WMA, APE and WavPack don't play yet.
+- **Library and player** for MP3, FLAC, M4A/AAC, ALAC, OGG Vorbis, WAV and AIFF. Opus, WMA, APE and WavPack don't play yet. An album found in two folders, such as a download you also share, shows up once.
 - **Themes:** dark, light, follow Windows, or one of 30 named themes such as gruvbox, catppuccin, tokyo night, nord and dracula.
 - **Notifications** for new messages, finished albums and new wishlist results, also in the Windows notification center.
 - **Reconnects** by itself when the connection drops, and rejoins your rooms.

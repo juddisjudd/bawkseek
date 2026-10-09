@@ -211,37 +211,18 @@ impl SettingsView {
 
     fn render_modes(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {
         let own = self.theme == DEFAULT_THEME;
-        div()
-            .flex()
-            .flex_none()
-            .p(px(2.))
-            .gap(px(2.))
-            .rounded(px(4.))
-            .border_1()
-            .border_color(p.border_weak)
-            .children(
-                [
-                    (Mode::System, "system"),
-                    (Mode::Dark, "dark"),
-                    (Mode::Light, "light"),
-                ]
-                .map(|(mode, label)| {
-                    let active = own && self.mode == mode;
-                    div()
-                        .id(label)
-                        .px(px(12.))
-                        .py(px(3.))
-                        .rounded(px(3.))
-                        .cursor_pointer()
-                        .text_color(if active { p.text_strong } else { p.text_weak })
-                        .when(active, |this| this.bg(p.bg_hover))
-                        .hover(|style| style.text_color(p.text_strong))
-                        .child(label)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.pick_theme(DEFAULT_THEME.into(), mode, cx)
-                        }))
-                }),
-            )
+        kit::segmented(p).children(
+            [
+                (Mode::System, "system"),
+                (Mode::Dark, "dark"),
+                (Mode::Light, "light"),
+            ]
+            .map(|(mode, label)| {
+                kit::segment(label, label, own && self.mode == mode, p).on_click(cx.listener(
+                    move |this, _, _, cx| this.pick_theme(DEFAULT_THEME.into(), mode, cx),
+                ))
+            }),
+        )
     }
 
     fn render_looks(&self, p: &Palette, cx: &mut Context<Self>) -> impl IntoElement {

@@ -28,7 +28,7 @@ use crate::theme::{self, Mode, palette};
 use browse::BrowseView;
 use chrome::{Page, Presence};
 use discover::{DiscoverEvent, DiscoverView};
-use library::LibraryView;
+use library::{LibraryView, SortChanged};
 use login::{LoginRequest, LoginView};
 use messages::MessagesView;
 use player::Playback;
@@ -118,7 +118,8 @@ impl Workspace {
         let settings =
             cx.new(|cx| SettingsView::new(&config, session.clone(), updates.clone(), window, cx));
         let playback = cx.new(|cx| Playback::new(window, cx));
-        let library = cx.new(|cx| LibraryView::new(playback.clone(), window, cx));
+        let library =
+            cx.new(|cx| LibraryView::new(playback.clone(), config.library_sort, window, cx));
 
         let subscriptions = vec![
             cx.subscribe_in(&login, window, |this, _, request: &LoginRequest, _, cx| {
@@ -142,6 +143,10 @@ impl Workspace {
                 window.push_notification(Notification::info(text), cx);
             }),
             cx.observe(&updates, |_, _, cx| cx.notify()),
+            cx.subscribe_in(&library, window, |this, _, sorted: &SortChanged, _, _| {
+                this.config.library_sort = sorted.0;
+                this.save();
+            }),
             cx.subscribe_in(&uploads, window, Self::open_user),
             cx.subscribe_in(&messages, window, Self::open_user),
             cx.subscribe_in(&rooms, window, Self::open_user),

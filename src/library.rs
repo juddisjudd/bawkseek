@@ -1,9 +1,11 @@
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
+use chrono::{DateTime, Local};
 use lofty::config::ParseOptions;
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::picture::PictureType;
@@ -42,6 +44,39 @@ pub struct Album {
     pub tracks: Vec<Track>,
     pub cover: Option<PathBuf>,
     pub duration: u32,
+    pub folder: PathBuf,
+    pub added: u64,
+}
+
+/// How the library page orders albums, and the headings it groups them under.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Sort {
+    #[default]
+    Artist,
+    Album,
+    Recent,
+    Folder,
+}
+
+impl Sort {
+    pub const ALL: [Sort; 4] = [Sort::Artist, Sort::Album, Sort::Recent, Sort::Folder];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Sort::Artist => "artist",
+            Sort::Album => "album",
+            Sort::Recent => "recently added",
+            Sort::Folder => "folder",
+        }
+    }
+}
+
+/// Albums under one heading; the heading is empty when the sort does not group.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Section {
+    pub heading: String,
+    pub albums: Vec<usize>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -262,6 +297,23 @@ fn cover_for(album: &Album, covers: &Path) -> Option<PathBuf> {
     write_thumbnail(&bytes, &out).then_some(out)
 }
 
+fn parent_of(track: &Track) -> &Path {
+    track.path.parent().unwrap_or(Path::new(""))
+}
+
+/// The folder holding most of the album's tracks.
+fn main_folder(tracks: &[Track]) -> PathBuf {
+    let mut counts: HashMap<&Path, usize> = HashMap::new();
+    for track in tracks {
+        *counts.entry(parent_of(track)).or_default() += 1;
+    }
+    counts
+        .into_iter()
+        .max_by(|a, b| a.1.cmp(&b.1).then_with(|| b.0.cmp(a.0)))
+        .map(|(dir, _)| dir.to_path_buf())
+        .unwrap_or_default()
+}
+
 fn album_of(tracks: Vec<Track>) -> Album {
     let first = &tracks[0];
     let artist = [&first.album_artist, &first.artist]
@@ -275,8 +327,45 @@ fn album_of(tracks: Vec<Track>) -> Album {
         year: tracks.iter().find_map(|track| track.year),
         duration: tracks.iter().map(|track| track.duration).sum(),
         cover: None,
+        folder: main_folder(&tracks),
+        added: tracks.iter().map(|track| track.modified).max().unwrap_or(0),
         tracks,
     }
+}
+
+fn same_track(a: &Track, b: &Track) -> bool {
+    a.disc.unwrap_or(1) == b.disc.unwrap_or(1)
+        && a.track == b.track
+        && a.title.to_lowercase() == b.title.to_lowercase()
+        && a.duration.abs_diff(b.duration) <= 2
+}
+
+/// An album in two folders, such as a download that is also shared, keeps one copy of each track: the fuller folder's, then the bigger file.
+fn dedupe(tracks: Vec<Track>) -> Vec<Track> {
+    let mut per_folder: HashMap<PathBuf, usize> = HashMap::new();
+    for track in &tracks {
+        *per_folder
+            .entry(parent_of(track).to_path_buf())
+            .or_default() += 1;
+    }
+    if per_folder.len() < 2 {
+        return tracks;
+    }
+    let mut ranked = tracks;
+    ranked.sort_by_cached_key(|track| {
+        (
+            Reverse(per_folder[parent_of(track)]),
+            Reverse(track.size),
+            track.path.clone(),
+        )
+    });
+    let mut kept: Vec<Track> = Vec::new();
+    for track in ranked {
+        if !kept.iter().any(|other| same_track(other, &track)) {
+            kept.push(track);
+        }
+    }
+    kept
 }
 
 /// Files played straight from the transfer list, in the order given, which the library may not have scanned yet.
@@ -307,7 +396,8 @@ fn group(tracks: Vec<Track>) -> Vec<Album> {
     }
     let mut albums: Vec<Album> = albums
         .into_values()
-        .map(|mut tracks| {
+        .map(|tracks| {
+            let mut tracks = dedupe(tracks);
             tracks.sort_by(|a, b| {
                 (a.disc.unwrap_or(1), a.track.unwrap_or(u32::MAX), &a.path).cmp(&(
                     b.disc.unwrap_or(1),
@@ -367,15 +457,145 @@ pub fn scan(roots: &[PathBuf], data_dir: &Path) -> Library {
         let _ = fs::write(&cache_path, json);
     }
 
-    let count = tracks.len();
     let covers = data_dir.join("covers");
     let mut albums = group(tracks);
     for album in &mut albums {
         album.cover = cover_for(album, &covers);
     }
     Library {
+        tracks: albums.iter().map(|album| album.tracks.len()).sum(),
         albums,
-        tracks: count,
+    }
+}
+
+/// A leading "the" is skipped, so The Low Hums sorts under L.
+fn sort_name(name: &str) -> String {
+    let lower = name.trim().to_lowercase();
+    match lower.strip_prefix("the ") {
+        Some(rest) if !rest.trim().is_empty() => rest.trim().to_string(),
+        _ => lower,
+    }
+}
+
+/// The folder that holds the album's folder, named from the library folder it sits in, such as Music\Rock.
+fn folder_heading(folder: &Path, roots: &[PathBuf]) -> String {
+    let parent = if roots.iter().any(|root| root == folder) {
+        folder
+    } else {
+        folder.parent().unwrap_or(folder)
+    };
+    let base = roots
+        .iter()
+        .filter(|root| parent.starts_with(root))
+        .max_by_key(|root| root.components().count())
+        .and_then(|root| root.parent());
+    match base.and_then(|base| parent.strip_prefix(base).ok()) {
+        Some(relative) if !relative.as_os_str().is_empty() => {
+            relative.to_string_lossy().into_owned()
+        }
+        _ => parent.to_string_lossy().into_owned(),
+    }
+}
+
+fn period(added: u64, now: DateTime<Local>) -> String {
+    let Some(when) = DateTime::from_timestamp(added as i64, 0) else {
+        return "earlier".into();
+    };
+    let when = when.with_timezone(&Local);
+    match (now.date_naive() - when.date_naive()).num_days() {
+        ..=0 => "today".into(),
+        1 => "yesterday".into(),
+        2..=6 => "last 7 days".into(),
+        7..=29 => "last 30 days".into(),
+        _ => when.format("%B %Y").to_string().to_lowercase(),
+    }
+}
+
+fn grouped<K: Ord>(
+    albums: &[Album],
+    visible: &[usize],
+    heading: impl Fn(&Album) -> (String, String),
+    order: impl Fn(&Album) -> K,
+) -> Vec<Section> {
+    let mut groups: BTreeMap<String, Section> = BTreeMap::new();
+    for &ix in visible {
+        let (key, label) = heading(&albums[ix]);
+        groups
+            .entry(key)
+            .or_insert_with(|| Section {
+                heading: label,
+                albums: Vec::new(),
+            })
+            .albums
+            .push(ix);
+    }
+    groups
+        .into_values()
+        .map(|mut section| {
+            section
+                .albums
+                .sort_by_cached_key(|&ix| (order(&albums[ix]), ix));
+            section
+        })
+        .collect()
+}
+
+/// Orders the visible albums, given as indexes into `albums`, and groups them under headings.
+pub fn arrange(
+    albums: &[Album],
+    visible: &[usize],
+    sort: Sort,
+    roots: &[PathBuf],
+    now: DateTime<Local>,
+) -> Vec<Section> {
+    match sort {
+        Sort::Artist => grouped(
+            albums,
+            visible,
+            |album| (sort_name(&album.artist), album.artist.clone()),
+            |album| (album.year.unwrap_or(0), sort_name(&album.title)),
+        ),
+        Sort::Album => {
+            let mut order = visible.to_vec();
+            order.sort_by_cached_key(|&ix| {
+                (sort_name(&albums[ix].title), sort_name(&albums[ix].artist))
+            });
+            vec![Section {
+                heading: String::new(),
+                albums: order,
+            }]
+        }
+        Sort::Recent => {
+            let mut order = visible.to_vec();
+            order.sort_by_key(|&ix| (Reverse(albums[ix].added), ix));
+            let mut sections: Vec<Section> = Vec::new();
+            for ix in order {
+                let heading = period(albums[ix].added, now);
+                match sections.last_mut() {
+                    Some(section) if section.heading == heading => section.albums.push(ix),
+                    _ => sections.push(Section {
+                        heading,
+                        albums: vec![ix],
+                    }),
+                }
+            }
+            sections
+        }
+        Sort::Folder => grouped(
+            albums,
+            visible,
+            |album| {
+                let label = folder_heading(&album.folder, roots);
+                (label.to_lowercase(), label)
+            },
+            |album| {
+                album
+                    .folder
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_lowercase())
+                    .unwrap_or_default()
+            },
+        ),
     }
 }
 
@@ -414,6 +634,129 @@ mod tests {
         assert_eq!(geogaddi.tracks[0].track, Some(1));
         assert_eq!(geogaddi.duration, 120);
         assert_eq!(albums[2].artist, "unknown artist");
+    }
+
+    fn album(title: &str, artist: &str, folder: &str, added: u64) -> Album {
+        Album {
+            title: title.into(),
+            artist: artist.into(),
+            year: None,
+            tracks: Vec::new(),
+            cover: None,
+            duration: 0,
+            folder: PathBuf::from(folder),
+            added,
+        }
+    }
+
+    fn headings(sections: &[Section]) -> Vec<&str> {
+        sections
+            .iter()
+            .map(|section| section.heading.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn keeps_one_copy_of_an_album_found_in_two_folders() {
+        let song = |dir: &str, n: u32, title: &str| Track {
+            title: title.into(),
+            ..track(
+                &format!(r"{dir}\{n:02}.flac"),
+                "Glass Lanterns",
+                "Neon Harbor",
+                Some(n),
+            )
+        };
+        let albums = group(vec![
+            song("downloads", 2, "Glass Lanterns"),
+            song("share", 1, "Low Tide Signal"),
+            song("share", 2, "Glass Lanterns"),
+            song("share", 3, "Harbor Lights"),
+        ]);
+        assert_eq!(albums.len(), 1);
+        let paths: Vec<PathBuf> = albums[0]
+            .tracks
+            .iter()
+            .map(|track| track.path.clone())
+            .collect();
+        assert_eq!(
+            paths,
+            [r"share\01.flac", r"share\02.flac", r"share\03.flac"].map(PathBuf::from)
+        );
+        assert_eq!(albums[0].folder, PathBuf::from("share"));
+    }
+
+    #[test]
+    fn groups_albums_under_artists_ignoring_a_leading_the() {
+        let mut later = album("Small Hours", "Kite Season", r"m\k1", 1);
+        later.year = Some(2022);
+        let mut earlier = album("Paper Kites", "Kite Season", r"m\k2", 1);
+        earlier.year = Some(2019);
+        let albums = vec![
+            album("Tides", "Saltwater Choir", r"m\s", 1),
+            later,
+            earlier,
+            album("Basement Tapes", "The Low Hums", r"m\l", 1),
+        ];
+        let sections = arrange(&albums, &[0, 1, 2, 3], Sort::Artist, &[], Local::now());
+        assert_eq!(
+            headings(&sections),
+            ["Kite Season", "The Low Hums", "Saltwater Choir"]
+        );
+        assert_eq!(sections[0].albums, [2, 1]);
+    }
+
+    #[test]
+    fn sorts_albums_by_title_without_headings() {
+        let albums = vec![
+            album("Tides", "a", r"m\t", 1),
+            album("The Basement Tapes", "b", r"m\b", 1),
+            album("Midnight Transit", "c", r"m\m", 1),
+        ];
+        let sections = arrange(&albums, &[0, 1, 2], Sort::Album, &[], Local::now());
+        assert_eq!(headings(&sections), [""]);
+        assert_eq!(sections[0].albums, [1, 2, 0]);
+    }
+
+    #[test]
+    fn puts_recent_albums_first_under_dated_headings() {
+        let now = Local::now();
+        let today = now.timestamp() as u64;
+        let day = 86_400;
+        let albums = vec![
+            album("Old", "a", r"m\o", today - 400 * day),
+            album("New", "b", r"m\n", today),
+            album("Week", "c", r"m\w", today - 3 * day),
+        ];
+        let sections = arrange(&albums, &[0, 1, 2], Sort::Recent, &[], now);
+        assert_eq!(headings(&sections)[..2], ["today", "last 7 days"]);
+        let order: Vec<usize> = sections
+            .iter()
+            .flat_map(|section| section.albums.clone())
+            .collect();
+        assert_eq!(order, [1, 2, 0]);
+    }
+
+    #[test]
+    fn groups_by_folder_named_from_the_library_folder() {
+        let roots = vec![
+            PathBuf::from(r"D:\Music"),
+            PathBuf::from(r"E:\Downloads\bawkseek"),
+        ];
+        let albums = vec![
+            album("x", "a", r"D:\Music\Rock\Band - Record", 1),
+            album(
+                "y",
+                "b",
+                r"E:\Downloads\bawkseek\Neon Harbor - Glass Lanterns",
+                1,
+            ),
+            album("z", "c", r"D:\Music\Rock\Another - One", 1),
+            album("loose", "d", r"D:\Music", 1),
+        ];
+        let sections = arrange(&albums, &[0, 1, 2, 3], Sort::Folder, &roots, Local::now());
+        assert_eq!(headings(&sections), ["bawkseek", "Music", r"Music\Rock"]);
+        assert_eq!(sections[2].albums, [2, 0]);
     }
 
     #[test]

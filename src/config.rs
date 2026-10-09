@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::library::Sort;
 use crate::theme::{DEFAULT_THEME, Mode};
 
 const KEYRING_SERVICE: &str = "bawkseek";
@@ -27,6 +28,7 @@ pub struct Config {
     pub upnp: bool,
     pub download_limit: u64,
     pub check_updates: bool,
+    pub library_sort: Sort,
 }
 
 impl Default for Config {
@@ -47,6 +49,7 @@ impl Default for Config {
             upnp: true,
             download_limit: 0,
             check_updates: true,
+            library_sort: Sort::Artist,
         }
     }
 }

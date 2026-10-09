@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use chrono::Local;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::scroll::ScrollableElement;
@@ -13,17 +14,89 @@ use super::covers::CoverCache;
 use super::kit;
 use super::player::Playback;
 use crate::format;
-use crate::library::{self, Album, Library};
+use crate::library::{self, Album, Library, Section, Sort};
 use crate::theme::{Palette, palette};
 
 const CARD: f32 = 160.;
 const GAP: f32 = 20.;
 const ROW: f32 = CARD + 64.;
+const HEADING: f32 = 44.;
+/// Roughly how wide one character of a heading draws, to give a group room for its name.
+const HEADING_CHAR: f32 = 8.;
 /// Covers kept decoded at once; a screenful is a few dozen.
 const COVER_CACHE: usize = 160;
 const RESCAN_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
 /// The sidebar and page padding, which the album grid cannot use.
 const CHROME: f32 = 208. + 80.;
+
+pub struct SortChanged(pub Sort);
+
+/// Albums under one heading, `slots` grid columns wide.
+struct Group {
+    heading: SharedString,
+    count: usize,
+    albums: Vec<usize>,
+    slots: usize,
+}
+
+/// One row of the grid: headed groups side by side, or a group's albums that did not fit its first row.
+enum Line {
+    Groups(Vec<Group>),
+    Cards(Vec<usize>),
+}
+
+impl Line {
+    fn height(&self) -> f32 {
+        match self {
+            Line::Groups(_) => HEADING + ROW,
+            Line::Cards(_) => ROW,
+        }
+    }
+}
+
+fn slots_for(heading: &str, albums: usize, cols: usize) -> usize {
+    let count = if albums > 1 { 80. } else { 0. };
+    let text = heading.chars().count() as f32 * HEADING_CHAR + count;
+    let slots = ((text + GAP) / (CARD + GAP)).ceil() as usize;
+    slots.max(albums).clamp(1, cols)
+}
+
+/// Small groups share a row so a library of one-album artists does not spend a row on each.
+fn lines(sections: Vec<Section>, cols: usize) -> Vec<Line> {
+    let mut lines = Vec::new();
+    let mut row: Vec<Group> = Vec::new();
+    let mut used = 0;
+    for section in sections {
+        if section.heading.is_empty() {
+            lines.extend(section.albums.chunks(cols).map(|r| Line::Cards(r.to_vec())));
+            continue;
+        }
+        let count = section.albums.len();
+        let slots = slots_for(&section.heading, count, cols);
+        if used + slots > cols {
+            lines.push(Line::Groups(std::mem::take(&mut row)));
+            used = 0;
+        }
+        let mut albums = section.albums;
+        let rest = albums.split_off(albums.len().min(cols));
+        row.push(Group {
+            heading: section.heading.into(),
+            count,
+            albums,
+            slots,
+        });
+        used += slots;
+        if !rest.is_empty() {
+            lines.push(Line::Groups(std::mem::take(&mut row)));
+            used = 0;
+            lines.extend(rest.chunks(cols).map(|r| Line::Cards(r.to_vec())));
+        }
+    }
+    if !row.is_empty() {
+        lines.push(Line::Groups(row));
+    }
+    lines
+}
 
 pub struct LibraryView {
     playback: Entity<Playback>,
@@ -31,6 +104,7 @@ pub struct LibraryView {
     scanning: bool,
     roots: Vec<PathBuf>,
     open: Option<usize>,
+    sort: Sort,
     filter: Entity<InputState>,
     covers: Entity<CoverCache>,
     scroll: VirtualListScrollHandle,
@@ -38,8 +112,15 @@ pub struct LibraryView {
     _subscriptions: Vec<Subscription>,
 }
 
+impl EventEmitter<SortChanged> for LibraryView {}
+
 impl LibraryView {
-    pub fn new(playback: Entity<Playback>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        playback: Entity<Playback>,
+        sort: Sort,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let filter = cx
             .new(|cx| InputState::new(window, cx).placeholder("filter by artist, album or track"));
         let subscriptions = vec![
@@ -56,6 +137,7 @@ impl LibraryView {
             scanning: false,
             roots: Vec::new(),
             open: None,
+            sort,
             filter,
             covers: CoverCache::new(COVER_CACHE, cx),
             scroll: VirtualListScrollHandle::new(),
@@ -145,6 +227,16 @@ impl LibraryView {
             .collect()
     }
 
+    fn set_sort(&mut self, sort: Sort, cx: &mut Context<Self>) {
+        if sort == self.sort {
+            return;
+        }
+        self.sort = sort;
+        self.scroll.scroll_to_item(0, ScrollStrategy::Top);
+        cx.emit(SortChanged(sort));
+        cx.notify();
+    }
+
     fn play(&mut self, album: usize, start: usize, cx: &mut Context<Self>) {
         let Some(album) = self
             .library
@@ -161,32 +253,44 @@ impl LibraryView {
     fn render_rows(
         &mut self,
         range: std::ops::Range<usize>,
-        cols: usize,
-        visible: Rc<Vec<usize>>,
+        lines: Rc<Vec<Line>>,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let p = palette(cx);
         let Some(library) = self.library.clone() else {
             return Vec::new();
         };
+        let cards = |albums: &[usize], cx: &mut Context<Self>| {
+            div()
+                .h(px(ROW))
+                .flex()
+                .gap(px(GAP))
+                .children(albums.iter().map(|&ix| {
+                    album_card(&library.albums[ix], ix, &p).on_click(cx.listener(
+                        move |this, _, _, cx| {
+                            this.open = Some(ix);
+                            cx.notify();
+                        },
+                    ))
+                }))
+        };
         range
-            .map(|row| {
-                let start = row * cols;
-                let end = (start + cols).min(visible.len());
-                div()
-                    .h(px(ROW))
+            .map(|row| match &lines[row] {
+                Line::Groups(groups) => div()
+                    .h(px(HEADING + ROW))
                     .flex()
                     .gap(px(GAP))
-                    .children(visible[start..end].iter().map(|ix| {
-                        let ix = *ix;
-                        album_card(&library.albums[ix], ix, &p).on_click(cx.listener(
-                            move |this, _, _, cx| {
-                                this.open = Some(ix);
-                                cx.notify();
-                            },
-                        ))
+                    .children(groups.iter().map(|group| {
+                        div()
+                            .w(px(group.slots as f32 * (CARD + GAP) - GAP))
+                            .flex_none()
+                            .flex()
+                            .flex_col()
+                            .child(heading(group.heading.clone(), group.count, &p))
+                            .child(cards(&group.albums, cx))
                     }))
-                    .into_any_element()
+                    .into_any_element(),
+                Line::Cards(albums) => cards(albums, cx).into_any_element(),
             })
             .collect()
     }
@@ -354,6 +458,32 @@ fn cover(album: &Album, size: f32, p: &Palette) -> AnyElement {
     }
 }
 
+fn heading(name: SharedString, count: usize, p: &Palette) -> Div {
+    div()
+        .h(px(HEADING - 12.))
+        .mb(px(12.))
+        .flex()
+        .items_end()
+        .gap_3()
+        .pb(px(8.))
+        .border_b_1()
+        .border_color(p.border_weak)
+        .child(
+            kit::truncate(name)
+                .text_color(p.text_strong)
+                .font_weight(FontWeight::SEMIBOLD),
+        )
+        .when(count > 1, |this| {
+            this.child(
+                div()
+                    .flex_none()
+                    .text_size(px(12.))
+                    .text_color(p.text_weaker)
+                    .child(format::plural(count, "album", "albums")),
+            )
+        })
+}
+
 fn album_card(album: &Album, ix: usize, p: &Palette) -> Stateful<Div> {
     div()
         .id(("album", ix))
@@ -406,11 +536,26 @@ impl Render for LibraryView {
         let body = if let Some(ix) = self.open {
             self.render_album(ix, &p, cx)
         } else {
-            let visible = Rc::new(self.visible(cx));
+            let visible = self.visible(cx);
             let available = (window.viewport_size().width.as_f32() - CHROME).max(CARD);
             let cols = (((available + GAP) / (CARD + GAP)) as usize).max(1);
-            let rows = visible.len().div_ceil(cols);
-            let sizes = Rc::new(vec![size(px(1.), px(ROW)); rows]);
+            let sections = match &self.library {
+                Some(library) => library::arrange(
+                    &library.albums,
+                    &visible,
+                    self.sort,
+                    &self.roots,
+                    Local::now(),
+                ),
+                None => Vec::new(),
+            };
+            let lines = Rc::new(lines(sections, cols));
+            let sizes = Rc::new(
+                lines
+                    .iter()
+                    .map(|line| size(px(1.), px(line.height())))
+                    .collect::<Vec<_>>(),
+            );
             let list = if visible.is_empty() {
                 let (title, body) = if self.scanning || self.library.is_none() {
                     (
@@ -434,7 +579,7 @@ impl Render for LibraryView {
                     .image_cache(self.covers.clone())
                     .child(
                         v_virtual_list(cx.entity(), "albums", sizes, move |this, range, _, cx| {
-                            this.render_rows(range, cols, visible.clone(), cx)
+                            this.render_rows(range, lines.clone(), cx)
                         })
                         .track_scroll(&self.scroll)
                         .pb_4(),
@@ -453,14 +598,26 @@ impl Render for LibraryView {
                         .pb(px(8.))
                         .border_b_1()
                         .border_color(p.border_weak)
+                        .flex()
+                        .items_center()
+                        .gap_3()
                         .child(
-                            kit::input(&self.filter)
-                                .appearance(false)
-                                .cleanable(true)
-                                .prefix(
-                                    Icon::new(IconName::Search).small().text_color(p.text_weak),
-                                ),
-                        ),
+                            div().flex_1().min_w_0().child(
+                                kit::input(&self.filter)
+                                    .appearance(false)
+                                    .cleanable(true)
+                                    .prefix(
+                                        Icon::new(IconName::Search).small().text_color(p.text_weak),
+                                    ),
+                            ),
+                        )
+                        .child(div().flex_none().text_color(p.text_weaker).child("sort by"))
+                        .child(kit::segmented(&p).children(Sort::ALL.map(|sort| {
+                            kit::segment(sort.label(), sort.label(), sort == self.sort, &p)
+                                .on_click(
+                                    cx.listener(move |this, _, _, cx| this.set_sort(sort, cx)),
+                                )
+                        }))),
                 )
                 .child(list)
                 .into_any_element()
@@ -476,5 +633,65 @@ impl Render for LibraryView {
             .image_cache(self.covers.clone())
             .child(header)
             .child(body)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Line, lines};
+    use crate::library::Section;
+
+    fn section(heading: &str, albums: std::ops::Range<usize>) -> Section {
+        Section {
+            heading: heading.into(),
+            albums: albums.collect(),
+        }
+    }
+
+    fn shape(lines: &[Line]) -> Vec<Vec<usize>> {
+        lines
+            .iter()
+            .map(|line| match line {
+                Line::Groups(groups) => groups.iter().map(|group| group.albums.len()).collect(),
+                Line::Cards(albums) => vec![albums.len()],
+            })
+            .collect()
+    }
+
+    #[test]
+    fn packs_small_groups_into_one_row_and_wraps_big_ones() {
+        let packed = lines(
+            vec![
+                section("Abe", 0..1),
+                section("Bo", 1..3),
+                section("Cy", 3..4),
+                section("Di", 4..11),
+            ],
+            5,
+        );
+        assert_eq!(shape(&packed), [vec![1, 2, 1], vec![5], vec![2]]);
+        assert!(matches!(packed[2], Line::Cards(_)));
+    }
+
+    #[test]
+    fn gives_long_headings_room() {
+        let packed = lines(
+            vec![
+                section(r"Music\Rock\Some Long Folder", 0..1),
+                section("Ed", 1..2),
+            ],
+            3,
+        );
+        let Line::Groups(groups) = &packed[0] else {
+            panic!("expected a headed row");
+        };
+        assert_eq!(groups[0].slots, 2);
+        assert_eq!(groups.len(), 2);
+    }
+
+    #[test]
+    fn leaves_ungrouped_albums_as_plain_rows() {
+        let packed = lines(vec![section("", 0..7)], 3);
+        assert_eq!(shape(&packed), [vec![3], vec![3], vec![1]]);
     }
 }
