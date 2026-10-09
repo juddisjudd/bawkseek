@@ -724,7 +724,7 @@ impl SettingsView {
                                     )
                                     .child(kit::tag(format!("v{VERSION}"), p)),
                             )
-                            .child(div().text_color(p.text_weak).child("a soulseek client for windows")),
+                            .child(div().text_color(p.text_weak).child("soulseek client & audio player")),
                     ),
             )
             .child(self.render_update(p, cx))

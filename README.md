@@ -6,7 +6,7 @@
 [![Windows 10 and 11](https://img.shields.io/badge/windows-10%20%7C%2011-f6d56b?style=flat-square&labelColor=13100f)](#1-download)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-f6d56b?style=flat-square&labelColor=13100f)](LICENSE)
 
-bawkseek is a Windows app for [Soulseek](https://www.slsknet.org), the long-running network where people share music straight from their own computers. Search everyone's shared folders, download whole albums, chat, and play your music, all in one window.
+bawkseek is a Windows app for [Soulseek](https://www.slsknet.org), the long-running network where people share music straight from their own computers. Search everyone's shared folders, download whole albums, chat, and play your music in the built-in player.
 
 ![The library, with album covers and the player bar](docs/screenshots/library.png)
 

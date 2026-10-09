@@ -151,7 +151,7 @@ impl Render for LoginView {
                                     .child(div().text_color(p.text_strong).child("bawk"))
                                     .child(div().text_color(p.text_weak).child("seek")),
                             )
-                            .child(div().text_color(p.text_weak).child("soulseek, in one window")),
+                            .child(div().text_color(p.text_weak).child("soulseek client & audio player")),
                     )
                     .child(
                         div()
