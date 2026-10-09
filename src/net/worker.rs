@@ -32,6 +32,9 @@ const SEARCH_REFRESH: Duration = Duration::from_millis(700);
 const DOWNLOADS_REFRESH: Duration = Duration::from_millis(250);
 const UPLOADS_REFRESH: Duration = Duration::from_millis(500);
 const FOLDER_TIMEOUT: Duration = Duration::from_secs(25);
+/// One search keeps at most this many replies and files; past that it costs memory without helping anyone choose.
+const MAX_REPLIES: usize = 1_000;
+const MAX_FILES: usize = 20_000;
 
 pub fn spawn() -> (Sender<Command>, Receiver<Event>) {
     let (command_tx, command_rx) = mpsc::channel();
@@ -60,12 +63,21 @@ struct Tab {
 }
 
 impl Tab {
-    /// Keeps only files this tab has not shown yet; returns how many were new.
+    fn is_full(&self) -> bool {
+        self.replies.len() >= MAX_REPLIES || self.seen.len() >= MAX_FILES
+    }
+
+    /// Keeps only files this tab has not shown yet, up to the limits; returns how many were new.
     fn merge(&mut self, mut reply: SearchReply) -> usize {
+        if self.is_full() {
+            return 0;
+        }
         let username = reply.username.clone();
         reply
             .files
             .retain(|file| self.seen.insert((username.clone(), file.name.clone())));
+        let room = MAX_FILES.saturating_sub(self.seen.len() - reply.files.len());
+        reply.files.truncate(room);
         let added = reply.files.len();
         if added > 0 {
             self.replies.push(reply);
@@ -229,18 +241,7 @@ impl Worker {
             Command::RemoveWish(query) => self.wishlist.remove(&query),
             Command::ForgetSearch(tab) => {
                 self.tabs.remove(&tab);
-                let tokens: Vec<u32> = self
-                    .tokens
-                    .iter()
-                    .filter(|(_, owner)| **owner == tab)
-                    .map(|(token, _)| *token)
-                    .collect();
-                for token in tokens {
-                    self.tokens.remove(&token);
-                    if let Some(client) = &self.client {
-                        client.forget_search(token);
-                    }
-                }
+                self.forget_tokens(&tab);
             }
             Command::Download(files) => {
                 let added = files
@@ -727,6 +728,9 @@ impl Worker {
             return;
         };
         let added = tab.merge(reply);
+        if tab.is_full() {
+            self.forget_tokens(&name);
+        }
         if self.wishlist.is_wish(&name) {
             let fresh = self.wishlist.fresh(&name, added);
             if fresh > 0 {
@@ -737,6 +741,22 @@ impl Worker {
                         format::plural(fresh, "new result", "new results")
                     ),
                 );
+            }
+        }
+    }
+
+    /// Stops the crate from passing on more replies for this tab.
+    fn forget_tokens(&mut self, tab: &str) {
+        let tokens: Vec<u32> = self
+            .tokens
+            .iter()
+            .filter(|(_, owner)| *owner == tab)
+            .map(|(token, _)| *token)
+            .collect();
+        for token in tokens {
+            self.tokens.remove(&token);
+            if let Some(client) = &self.client {
+                client.forget_search(token);
             }
         }
     }
@@ -922,9 +942,11 @@ impl Worker {
             if tab.dirty && tab.sent.is_none_or(|at| at.elapsed() >= SEARCH_REFRESH) {
                 tab.dirty = false;
                 tab.sent = Some(Instant::now());
+                let mut hits = group(&tab.replies);
+                hits.capped = tab.is_full();
                 let _ = self.events.send(Event::Search {
                     query: name.clone(),
-                    hits: Arc::new(group(&tab.replies)),
+                    hits: Arc::new(hits),
                 });
             }
         }
@@ -1087,5 +1109,25 @@ mod tests {
         assert_eq!(tab.merge(reply(&["b", "c"])), 1);
         assert_eq!(tab.merge(reply(&["a"])), 0);
         assert_eq!(tab.replies.len(), 2);
+    }
+
+    #[test]
+    fn tabs_stop_at_the_file_limit() {
+        let mut tab = Tab::default();
+        let names: Vec<String> = (0..MAX_FILES + 10).map(|n| n.to_string()).collect();
+        let reply = SearchReply {
+            username: "ann".into(),
+            files: names
+                .iter()
+                .map(|name| FileEntry {
+                    name: name.clone(),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
+        assert_eq!(tab.merge(reply.clone()), MAX_FILES);
+        assert!(tab.is_full());
+        assert_eq!(tab.merge(reply), 0);
     }
 }

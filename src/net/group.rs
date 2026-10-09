@@ -77,6 +77,8 @@ pub struct SearchHits {
     pub formats: Vec<(String, usize)>,
     pub files: usize,
     pub users: usize,
+    /// The search reached its result limit, so later replies were left out.
+    pub capped: bool,
 }
 
 pub fn group(results: &[SearchReply]) -> SearchHits {
@@ -140,6 +142,7 @@ pub fn group(results: &[SearchReply]) -> SearchHits {
         formats,
         files,
         users: users.len(),
+        capped: false,
     }
 }
 

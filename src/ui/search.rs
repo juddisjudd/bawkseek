@@ -761,12 +761,15 @@ impl Render for SearchView {
             )
             .into_any_element(),
             Some(layout) => {
-                let stats = format!(
+                let mut stats = format!(
                     "{} · {} · {}",
                     format::plural(layout.shown, "folder", "folders"),
                     format::plural(layout.hits.files, "file", "files"),
                     format::plural(layout.hits.users, "user", "users"),
                 );
+                if layout.hits.capped {
+                    stats.push_str(" · limit reached");
+                }
                 let list = if layout.rows.is_empty() {
                     let (title, body) = if layout.hits.files == 0 {
                         ("searching…", "peers answer over the next half minute.")
