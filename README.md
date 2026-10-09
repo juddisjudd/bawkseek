@@ -46,6 +46,10 @@ Your downloads go to `Downloads\bawkseek`, one folder per album. You can change 
 
 Open **library** to see your downloads and shared folders as albums with their covers. Click an album, then **play**. The player stays at the bottom while you browse, with shuffle, repeat, a seek bar and volume. Press **space** to play or pause.
 
+### 6. Stay up to date
+
+bawkseek checks for a new version each time it starts. When one is out, you get a notification and a dot on **settings → about**. Press **update**, then **restart now**. Your settings and downloads stay as they are.
+
 ## Everything it does
 
 - **Search** with live results, sorted by speed, user, size or name. Each audio format has its own color: green for FLAC, yellow for MP3, and so on. Filter by format and quality, or show only users with a free slot.
@@ -60,6 +64,7 @@ Open **library** to see your downloads and shared folders as albums with their c
 - **Themes:** dark, light, follow Windows, or one of 30 named themes such as gruvbox, catppuccin, tokyo night, nord and dracula.
 - **Notifications** for new messages, finished albums and new wishlist results, also in the Windows notification center.
 - **Reconnects** by itself when the connection drops, and rejoins your rooms.
+- **Updates** itself from the releases page. Each download is checked against its SHA-256 checksum before it is installed.
 
 ## A closer look
 
@@ -106,6 +111,8 @@ Lossless files count as higher than any MP3 bitrate.
 **A song won't play.** Check that it's one of the formats listed above. Files that are still downloading or broken can't play either.
 
 **The library is missing new music.** It rescans by itself shortly after downloads finish. For music you added some other way, press **rescan** on the library page.
+
+**An update fails with "cannot write next to bawkseek.exe".** bawkseek is in a folder it can't change, such as `Program Files`. Move the bawkseek folder somewhere of your own, such as `Documents`, or download the new zip by hand.
 
 ## Where your things are
 

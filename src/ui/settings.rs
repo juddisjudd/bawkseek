@@ -8,13 +8,55 @@ use gpui_kit::component::switch::Switch;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use gpui_kit::assets::IconName;
+use gpui_kit::component::Icon;
+
 use super::kit;
+use super::updates::{UpdateState, Updates};
+use crate::assets::MARK;
 use crate::config::Config;
 use crate::net::{PortMap, Session};
 use crate::theme::{self, DEFAULT_THEME, Look, Mode, Palette, palette};
+use crate::updater::{ISSUES_URL, RELEASES_URL, REPO_URL, VERSION};
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-const RELEASES_URL: &str = "https://github.com/juddisjudd/bawkseek/releases";
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tab {
+    Account,
+    Network,
+    Downloads,
+    Appearance,
+    About,
+}
+
+impl Tab {
+    const ALL: [Tab; 5] = [
+        Tab::Account,
+        Tab::Network,
+        Tab::Downloads,
+        Tab::Appearance,
+        Tab::About,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Tab::Account => "account",
+            Tab::Network => "network",
+            Tab::Downloads => "downloads",
+            Tab::Appearance => "appearance",
+            Tab::About => "about",
+        }
+    }
+
+    fn icon(self) -> IconName {
+        match self {
+            Tab::Account => IconName::User,
+            Tab::Network => IconName::Wifi,
+            Tab::Downloads => IconName::Download,
+            Tab::Appearance => IconName::Palette,
+            Tab::About => IconName::Info,
+        }
+    }
+}
 
 pub enum SettingsEvent {
     DownloadDir(PathBuf),
@@ -24,11 +66,14 @@ pub enum SettingsEvent {
     Upnp(bool),
     DownloadLimit(u64),
     ChangePassword(String),
+    CheckUpdates(bool),
     Logout,
 }
 
 pub struct SettingsView {
     session: Entity<Session>,
+    updates: Entity<Updates>,
+    tab: Tab,
     username: SharedString,
     theme: SharedString,
     mode: Mode,
@@ -49,6 +94,7 @@ impl SettingsView {
     pub fn new(
         config: &Config,
         session: Entity<Session>,
+        updates: Entity<Updates>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -79,9 +125,12 @@ impl SettingsView {
             cx.subscribe_in(&listen_port, window, commit),
             cx.subscribe_in(&download_limit, window, commit),
             cx.observe(&session, |_, _, cx| cx.notify()),
+            cx.observe(&updates, |_, _, cx| cx.notify()),
         ];
         Self {
             session,
+            updates,
+            tab: Tab::Account,
             username: config.username.clone().into(),
             theme: config.theme.clone().into(),
             mode: config.mode,
@@ -265,20 +314,17 @@ impl SettingsView {
     }
 }
 
-fn section(title: &'static str, p: &Palette) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .gap_4()
-        .pb_6()
-        .border_b_1()
-        .border_color(p.border_weak)
-        .child(
-            div()
-                .text_color(p.text_strong)
-                .font_weight(FontWeight::SEMIBOLD)
-                .child(title),
-        )
+fn panel(title: &'static str, p: &Palette) -> Div {
+    div().flex().flex_col().gap_5().child(
+        div()
+            .pb_3()
+            .border_b_1()
+            .border_color(p.border_weak)
+            .text_size(px(16.))
+            .text_color(p.text_strong)
+            .font_weight(FontWeight::SEMIBOLD)
+            .child(title),
+    )
 }
 
 fn field(
@@ -375,12 +421,43 @@ fn portmap_status(state: &PortMap) -> String {
     }
 }
 
-impl Render for SettingsView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
-        let session = self.session.read(cx);
-        let portmap = portmap_status(&session.portmap);
-        let privileges = match session.privileges {
+impl SettingsView {
+    fn render_tabs(&self, p: &Palette, cx: &mut Context<Self>) -> Div {
+        let update = self.updates.read(cx).is_available();
+        div()
+            .w(px(180.))
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .children(Tab::ALL.map(|tab| {
+                let active = tab == self.tab;
+                div()
+                    .id(tab.label())
+                    .h(px(32.))
+                    .px_3()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .rounded(px(4.))
+                    .cursor_pointer()
+                    .text_color(if active { p.text_strong } else { p.text_weak })
+                    .when(active, |this| this.bg(p.bg_hover))
+                    .hover(|style| style.text_color(p.text_strong))
+                    .child(Icon::new(tab.icon()).size(px(15.)))
+                    .child(div().flex_1().child(tab.label()))
+                    .when(tab == Tab::About && update, |this| {
+                        this.child(kit::dot(p.yolk))
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.tab = tab;
+                        cx.notify();
+                    }))
+            }))
+    }
+
+    fn render_account(&self, p: &Palette, cx: &mut Context<Self>) -> Div {
+        let privileges = match self.session.read(cx).privileges {
             None => "not known yet".to_string(),
             Some(0) => "none. privileged users go first in upload queues.".to_string(),
             Some(seconds) => format!(
@@ -388,11 +465,124 @@ impl Render for SettingsView {
                 crate::format::plural((seconds / 86_400).max(1) as usize, "more day", "more days")
             ),
         };
+        panel("account", p)
+            .child(field(
+                "logged in as",
+                "logging out stops every transfer",
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(kit::strong(self.username.clone(), p))
+                    .child(
+                        kit::button("logout", cx)
+                            .small()
+                            .label("log out")
+                            .on_click(cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::Logout))),
+                    )
+                    .child(
+                        kit::button("password", cx)
+                            .small()
+                            .label("change password…")
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.change_password(window, cx)),
+                            ),
+                    ),
+                p,
+            ))
+            .child(field(
+                "away",
+                "tells other users you are not at the keyboard. resets when you log in again.",
+                Switch::new("away").checked(self.away).on_click(cx.listener(
+                    |this, checked: &bool, _, cx| {
+                        this.away = *checked;
+                        cx.emit(SettingsEvent::Away(*checked));
+                        cx.notify();
+                    },
+                )),
+                p,
+            ))
+            .child(field(
+                "privileges",
+                "bought on slsknet.org; the server reports them at login",
+                div().text_color(p.text).child(privileges),
+                p,
+            ))
+    }
+
+    fn render_network(&self, p: &Palette, cx: &mut Context<Self>) -> Div {
+        let portmap = portmap_status(&self.session.read(cx).portmap);
         let port_hint = if self.port_error {
             "use a number from 1024 to 65535"
         } else {
             "peers connect to you on this port. takes effect at next login."
         };
+        panel("network", p)
+            .child(field(
+                "listening port",
+                port_hint,
+                div().w(px(120.)).child(kit::input(&self.listen_port)),
+                p,
+            ))
+            .child(field(
+                "open the port automatically",
+                "asks your router over upnp. most home routers allow it.",
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(Switch::new("upnp").checked(self.upnp).on_click(cx.listener(
+                        |this, checked: &bool, _, cx| {
+                            this.upnp = *checked;
+                            cx.emit(SettingsEvent::Upnp(*checked));
+                            cx.notify();
+                        },
+                    )))
+                    .child(
+                        div()
+                            .text_size(px(12.))
+                            .text_color(p.text_weak)
+                            .child(portmap),
+                    ),
+                p,
+            ))
+    }
+
+    fn render_downloads(&self, p: &Palette, cx: &mut Context<Self>) -> Div {
+        let limit_hint = if self.limit_error {
+            "use a whole number, or 0 for no limit"
+        } else {
+            "kilobytes per second for all downloads together. 0 means no limit."
+        };
+        panel("downloads", p)
+            .child(field(
+                "download folder",
+                "each album gets its own folder inside",
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(div().flex_1().child(kit::input(&self.download_dir)))
+                    .child(
+                        kit::button("browse", cx)
+                            .label("browse…")
+                            .on_click(cx.listener(|this, _, window, cx| this.browse(window, cx))),
+                    ),
+                p,
+            ))
+            .child(field(
+                "speed limit",
+                limit_hint,
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(div().w(px(120.)).child(kit::input(&self.download_limit)))
+                    .child(div().text_color(p.text_weak).child("kb/s")),
+                p,
+            ))
+    }
+
+    fn render_appearance(&self, p: &Palette, cx: &mut Context<Self>) -> Div {
         let theme_hint: SharedString = if self.theme == DEFAULT_THEME {
             "system follows windows".into()
         } else {
@@ -403,149 +593,232 @@ impl Render for SettingsView {
                 .unwrap_or_default();
             format!("set by {label}. pick one to go back to bawk.").into()
         };
-        let limit_hint = if self.limit_error {
-            "use a whole number, or 0 for no limit"
-        } else {
-            "kilobytes per second for all downloads together. 0 means no limit."
-        };
+        panel("appearance", p)
+            .child(field(
+                "app theme",
+                theme_hint,
+                div().flex().child(self.render_modes(p, cx)),
+                p,
+            ))
+            .child(self.render_looks(p, cx))
+    }
 
+    fn render_update(&self, p: &Palette, cx: &mut Context<Self>) -> Div {
+        let state = self.updates.read(cx).state.clone();
+        let (icon, color, text): (IconName, Hsla, String) = match &state {
+            UpdateState::Idle => (IconName::RefreshCw, p.icon, "not checked yet".into()),
+            UpdateState::Checking => (IconName::RefreshCw, p.icon, "checking for updates…".into()),
+            UpdateState::Current => (
+                IconName::CircleCheck,
+                p.success,
+                "you have the newest version".into(),
+            ),
+            UpdateState::Available(release) => (
+                IconName::ArrowDownToLine,
+                p.yolk,
+                format!("bawkseek {} is out", release.version),
+            ),
+            UpdateState::Downloading {
+                version,
+                done,
+                total,
+            } => (
+                IconName::ArrowDownToLine,
+                p.yolk,
+                format!(
+                    "downloading {version}… {} of {}",
+                    crate::format::bytes(*done),
+                    crate::format::bytes(*total)
+                ),
+            ),
+            UpdateState::Ready { version, .. } => (
+                IconName::CircleCheck,
+                p.success,
+                format!("{version} is installed. restart to use it; running transfers stop."),
+            ),
+            UpdateState::Failed(error) => (IconName::CircleAlert, p.danger, error.clone()),
+        };
+        let updates = self.updates.clone();
+        let action = match &state {
+            UpdateState::Idle | UpdateState::Current | UpdateState::Failed(_) => Some(
+                kit::button("check-updates", cx)
+                    .small()
+                    .label(if matches!(state, UpdateState::Failed(_)) {
+                        "try again"
+                    } else {
+                        "check now"
+                    })
+                    .on_click(move |_, _, cx| updates.update(cx, |updates, cx| updates.check(cx))),
+            ),
+            UpdateState::Available(_) => Some(
+                Button::new("install-update")
+                    .primary()
+                    .small()
+                    .label("update")
+                    .on_click(move |_, _, cx| {
+                        updates.update(cx, |updates, cx| updates.install(cx))
+                    }),
+            ),
+            UpdateState::Ready { .. } => Some(
+                Button::new("restart")
+                    .primary()
+                    .small()
+                    .label("restart now")
+                    .on_click(move |_, _, cx| {
+                        updates.update(cx, |updates, cx| updates.restart(cx))
+                    }),
+            ),
+            UpdateState::Checking | UpdateState::Downloading { .. } => None,
+        };
+        let notes = match &state {
+            UpdateState::Available(release) => Some(release.page.clone()),
+            _ => None,
+        };
+        let fraction = match &state {
+            UpdateState::Downloading { done, total, .. } => {
+                Some((*done as f32 / (*total).max(1) as f32).min(1.0))
+            }
+            _ => None,
+        };
         div()
-            .id("settings")
+            .flex()
+            .flex_col()
+            .gap_3()
+            .p_4()
+            .rounded(px(6.))
+            .border_1()
+            .border_color(p.border_weak)
+            .bg(p.bg_weak)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(Icon::new(icon).size(px(16.)).text_color(color))
+                    .child(div().flex_1().min_w_0().text_color(p.text).child(text))
+                    .children(notes.map(|page| {
+                        kit::button("release-notes", cx)
+                            .small()
+                            .label("what's new")
+                            .on_click(move |_, _, cx| cx.open_url(&page))
+                    }))
+                    .children(action),
+            )
+            .children(fraction.map(|fraction| kit::progress_bar(fraction, p.yolk, p)))
+    }
+
+    fn render_about(&self, p: &Palette, cx: &mut Context<Self>) -> Div {
+        let automatic = self.updates.read(cx).automatic;
+        let link = |id: &'static str, label: &'static str, url: &'static str, cx: &App| {
+            kit::button(id, cx)
+                .small()
+                .icon(Icon::new(IconName::ExternalLink))
+                .label(label)
+                .on_click(move |_, _, cx| cx.open_url(url))
+        };
+        panel("about", p)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_4()
+                    .child(svg().path(MARK).size(px(56.)).text_color(p.text_strong))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_baseline()
+                                    .gap_3()
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .text_size(px(22.))
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(div().text_color(p.text_strong).child("bawk"))
+                                            .child(div().text_color(p.text_weak).child("seek")),
+                                    )
+                                    .child(kit::tag(format!("v{VERSION}"), p)),
+                            )
+                            .child(div().text_color(p.text_weak).child("a soulseek client for windows")),
+                    ),
+            )
+            .child(self.render_update(p, cx))
+            .child(field(
+                "check for updates",
+                "looks for a new version on github each time bawkseek starts",
+                Switch::new("check-updates")
+                    .checked(automatic)
+                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
+                        let on = *checked;
+                        this.updates
+                            .update(cx, |updates, cx| updates.set_automatic(on, cx));
+                        cx.emit(SettingsEvent::CheckUpdates(on));
+                    })),
+                p,
+            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .child(link("source", "source code", REPO_URL, cx))
+                    .child(link("releases", "all releases", RELEASES_URL, cx))
+                    .child(link("issues", "report a problem", ISSUES_URL, cx))
+                    .child(link(
+                        "license",
+                        "license: agpl-3.0",
+                        "https://github.com/juddisjudd/bawkseek/blob/main/LICENSE",
+                        cx,
+                    )),
+            )
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(p.text_weaker)
+                    .child("made with rust and gpui kit. the soulseek protocol notes come from the nicotine+ project."),
+            )
+    }
+}
+
+impl Render for SettingsView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = palette(cx);
+        let body = match self.tab {
+            Tab::Account => self.render_account(&p, cx),
+            Tab::Network => self.render_network(&p, cx),
+            Tab::Downloads => self.render_downloads(&p, cx),
+            Tab::Appearance => self.render_appearance(&p, cx),
+            Tab::About => self.render_about(&p, cx),
+        };
+        div()
             .size_full()
-            .overflow_y_scroll()
             .flex()
             .flex_col()
             .gap_6()
             .px(px(40.))
             .pt(px(32.))
-            .pb_8()
             .child(kit::page_header("settings", "saved as you change them", &p))
             .child(
-                section("account", &p)
-                    .child(field(
-                        "logged in as",
-                        "logging out stops every transfer",
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .gap_8()
+                    .child(self.render_tabs(&p, cx))
+                    .child(
                         div()
-                            .flex()
-                            .items_center()
-                            .gap_3()
-                            .child(kit::strong(self.username.clone(), &p))
-                            .child(
-                                kit::button("logout", cx)
-                                    .small()
-                                    .label("log out")
-                                    .on_click(cx.listener(|_, _, _, cx| cx.emit(SettingsEvent::Logout))),
-                            )
-                            .child(
-                                kit::button("password", cx)
-                                    .small()
-                                    .label("change password…")
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.change_password(window, cx)
-                                    })),
-                            ),
-                        &p,
-                    ))
-                    .child(field(
-                        "away",
-                        "tells other users you are not at the keyboard. resets when you log in again.",
-                        Switch::new("away")
-                            .checked(self.away)
-                            .on_click(cx.listener(|this, checked: &bool, _, cx| {
-                                this.away = *checked;
-                                cx.emit(SettingsEvent::Away(*checked));
-                                cx.notify();
-                            })),
-                        &p,
-                    ))
-                    .child(field(
-                        "privileges",
-                        "bought on slsknet.org; the server reports them at login",
-                        div().text_color(p.text).child(privileges),
-                        &p,
-                    )),
-            )
-            .child(
-                section("network", &p)
-                    .child(field(
-                        "listening port",
-                        port_hint,
-                        div().w(px(120.)).child(kit::input(&self.listen_port)),
-                        &p,
-                    ))
-                    .child(field(
-                        "open the port automatically",
-                        "asks your router over upnp. most home routers allow it.",
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(
-                                Switch::new("upnp")
-                                    .checked(self.upnp)
-                                    .on_click(cx.listener(|this, checked: &bool, _, cx| {
-                                        this.upnp = *checked;
-                                        cx.emit(SettingsEvent::Upnp(*checked));
-                                        cx.notify();
-                                    })),
-                            )
-                            .child(div().text_size(px(12.)).text_color(p.text_weak).child(portmap)),
-                        &p,
-                    )),
-            )
-            .child(
-                section("downloads", &p)
-                    .child(field(
-                        "download folder",
-                        "each album gets its own folder inside",
-                        div()
-                            .flex()
-                            .gap_2()
-                            .child(div().flex_1().child(kit::input(&self.download_dir)))
-                            .child(kit::button("browse", cx).label("browse…").on_click(
-                                cx.listener(|this, _, window, cx| this.browse(window, cx)),
-                            )),
-                        &p,
-                    ))
-                    .child(field(
-                        "speed limit",
-                        limit_hint,
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(div().w(px(120.)).child(kit::input(&self.download_limit)))
-                            .child(div().text_color(p.text_weak).child("kb/s")),
-                        &p,
-                    )),
-            )
-            .child(
-                section("appearance", &p)
-                    .child(field(
-                        "app theme",
-                        theme_hint,
-                        div().flex().child(self.render_modes(&p, cx)),
-                        &p,
-                    ))
-                    .child(self.render_looks(&p, cx)),
-            )
-            .child(
-                section("about", &p).child(field(
-                    "version",
-                    "new versions are published on github",
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_3()
-                        .child(kit::strong(format!("bawkseek {VERSION}"), &p))
-                        .child(
-                            kit::button("releases", cx)
-                                .small()
-                                .label("releases…")
-                                .on_click(|_, _, cx| cx.open_url(RELEASES_URL)),
-                        ),
-                    &p,
-                )),
+                            .id("settings-panel")
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .overflow_y_scroll()
+                            .pb_8()
+                            .child(body),
+                    ),
             )
     }
 }

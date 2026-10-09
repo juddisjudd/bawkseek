@@ -23,6 +23,9 @@ slsk = { path = "crates/slsk" }
 rodio = { version = "0.22.2", default-features = false, features = ["playback", "flac", "mp3", "mp4", "vorbis", "wav", "symphonia-alac", "symphonia-aiff"] }
 lofty = "0.25.4"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+ureq = { version = "3", features = ["json"] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+sha2 = "0.11"
 
 [profile.dev.package]
 gpui-pre = { opt-level = 3 }

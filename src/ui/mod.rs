@@ -11,6 +11,7 @@ mod rooms;
 mod search;
 mod settings;
 mod transfers;
+mod updates;
 mod uploads;
 mod users;
 
@@ -35,6 +36,7 @@ use rooms::RoomsView;
 use search::SearchView;
 use settings::{SettingsEvent, SettingsView};
 use transfers::{PlayFiles, TransfersView};
+use updates::{UpdateFound, Updates};
 use uploads::{UploadsEvent, UploadsView};
 use users::UsersView;
 
@@ -82,6 +84,7 @@ pub struct Workspace {
     settings: Entity<SettingsView>,
     library: Entity<LibraryView>,
     playback: Entity<Playback>,
+    updates: Entity<Updates>,
     focus: FocusHandle,
     finished_downloads: usize,
     _subscriptions: Vec<Subscription>,
@@ -111,7 +114,9 @@ impl Workspace {
         let rooms = cx.new(|cx| RoomsView::new(session.clone(), window, cx));
         let users = cx.new(|cx| UsersView::new(session.clone(), window, cx));
         let discover = cx.new(|cx| DiscoverView::new(session.clone(), window, cx));
-        let settings = cx.new(|cx| SettingsView::new(&config, session.clone(), window, cx));
+        let updates = cx.new(|cx| Updates::new(config.check_updates, cx));
+        let settings =
+            cx.new(|cx| SettingsView::new(&config, session.clone(), updates.clone(), window, cx));
         let playback = cx.new(|cx| Playback::new(window, cx));
         let library = cx.new(|cx| LibraryView::new(playback.clone(), window, cx));
 
@@ -129,6 +134,14 @@ impl Workspace {
             cx.subscribe_in(&search, window, Self::open_user),
             cx.subscribe_in(&transfers, window, Self::open_user),
             cx.subscribe_in(&transfers, window, Self::play_files),
+            cx.subscribe_in(&updates, window, |_, _, found: &UpdateFound, window, cx| {
+                let text = format!(
+                    "bawkseek {} is out. open settings → about to update.",
+                    found.0
+                );
+                window.push_notification(Notification::info(text), cx);
+            }),
+            cx.observe(&updates, |_, _, cx| cx.notify()),
             cx.subscribe_in(&uploads, window, Self::open_user),
             cx.subscribe_in(&messages, window, Self::open_user),
             cx.subscribe_in(&rooms, window, Self::open_user),
@@ -158,6 +171,7 @@ impl Workspace {
             session,
             config,
             page: Page::Search,
+            updates,
             focus: cx.focus_handle(),
             finished_downloads: 0,
             status: Status::Offline,
@@ -323,6 +337,7 @@ impl Workspace {
                     config::store_password(&self.config.username, password);
                 }
             }
+            SettingsEvent::CheckUpdates(on) => self.config.check_updates = *on,
             SettingsEvent::Logout => {
                 config::forget_password(&self.config.username);
                 self.session.update(cx, |session, cx| session.logout(cx));
@@ -604,6 +619,10 @@ impl Render for Workspace {
             (Page::Uploads, session.active_uploads()),
             (Page::Messages, session.chats.unread()),
             (Page::Rooms, session.rooms.unread()),
+            (
+                Page::Settings,
+                usize::from(self.updates.read(cx).is_available()),
+            ),
         ];
 
         let root = div()

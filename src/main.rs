@@ -10,12 +10,14 @@ mod logging;
 mod net;
 mod theme;
 mod ui;
+mod updater;
 
 use gpui_kit::component::TitleBar;
 use gpui_kit::*;
 
 fn main() {
     logging::init();
+    updater::clean_up();
     application().with_assets(assets::AppAssets).run(|cx| {
         init(cx);
         cx.set_app_identity("com.bawkseek.app", "bawkseek");

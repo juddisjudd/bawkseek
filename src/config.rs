@@ -26,6 +26,7 @@ pub struct Config {
     pub dislikes: Vec<String>,
     pub upnp: bool,
     pub download_limit: u64,
+    pub check_updates: bool,
 }
 
 impl Default for Config {
@@ -45,6 +46,7 @@ impl Default for Config {
             dislikes: Vec::new(),
             upnp: true,
             download_limit: 0,
+            check_updates: true,
         }
     }
 }
