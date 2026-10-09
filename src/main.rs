@@ -1,9 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod assets;
+mod audio;
 mod chats;
 mod config;
 mod format;
+mod library;
 mod logging;
 mod net;
 mod theme;

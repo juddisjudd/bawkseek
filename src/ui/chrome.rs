@@ -11,6 +11,7 @@ pub enum Page {
     Search,
     Transfers,
     Uploads,
+    Library,
     Browse,
     Rooms,
     Messages,
@@ -20,10 +21,11 @@ pub enum Page {
 }
 
 impl Page {
-    pub const MAIN: [Page; 8] = [
+    pub const MAIN: [Page; 9] = [
         Page::Search,
         Page::Transfers,
         Page::Uploads,
+        Page::Library,
         Page::Browse,
         Page::Rooms,
         Page::Messages,
@@ -36,6 +38,7 @@ impl Page {
             Page::Search => "search",
             Page::Transfers => "transfers",
             Page::Uploads => "uploads",
+            Page::Library => "library",
             Page::Browse => "browse",
             Page::Rooms => "rooms",
             Page::Messages => "messages",
@@ -50,6 +53,7 @@ impl Page {
             Page::Search => IconName::Search,
             Page::Transfers => IconName::Download,
             Page::Uploads => IconName::Upload,
+            Page::Library => IconName::Library,
             Page::Browse => IconName::FolderSearch,
             Page::Rooms => IconName::Hash,
             Page::Messages => IconName::MessagesSquare,

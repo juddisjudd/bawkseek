@@ -1,9 +1,12 @@
 mod browse;
 mod chrome;
+mod covers;
 mod discover;
 mod kit;
+mod library;
 mod login;
 mod messages;
+mod player;
 mod rooms;
 mod search;
 mod settings;
@@ -24,8 +27,10 @@ use crate::theme::{self, Mode, palette};
 use browse::BrowseView;
 use chrome::{Page, Presence};
 use discover::{DiscoverEvent, DiscoverView};
+use library::LibraryView;
 use login::{LoginRequest, LoginView};
 use messages::MessagesView;
+use player::Playback;
 use rooms::RoomsView;
 use search::SearchView;
 use settings::{SettingsEvent, SettingsView};
@@ -75,6 +80,8 @@ pub struct Workspace {
     users: Entity<UsersView>,
     discover: Entity<DiscoverView>,
     settings: Entity<SettingsView>,
+    library: Entity<LibraryView>,
+    playback: Entity<Playback>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -103,6 +110,8 @@ impl Workspace {
         let users = cx.new(|cx| UsersView::new(session.clone(), window, cx));
         let discover = cx.new(|cx| DiscoverView::new(session.clone(), window, cx));
         let settings = cx.new(|cx| SettingsView::new(&config, session.clone(), window, cx));
+        let playback = cx.new(|cx| Playback::new(window, cx));
+        let library = cx.new(|cx| LibraryView::new(playback.clone(), window, cx));
 
         let subscriptions = vec![
             cx.subscribe_in(&login, window, |this, _, request: &LoginRequest, _, cx| {
@@ -158,6 +167,8 @@ impl Workspace {
             users,
             discover,
             settings,
+            library,
+            playback,
             _subscriptions: subscriptions,
         };
         this.sync_social(cx);
@@ -467,6 +478,14 @@ impl Workspace {
             Page::Messages => self
                 .messages
                 .update(cx, |messages, cx| messages.focus(window, cx)),
+            Page::Library => {
+                let mut roots = vec![self.config.download_dir.clone()];
+                roots.extend(self.config.shared_dirs.iter().cloned());
+                self.library.update(cx, |library, cx| {
+                    library.set_roots(roots);
+                    library.ensure_scanned(cx);
+                });
+            }
             _ => {}
         }
         cx.notify();
@@ -565,7 +584,9 @@ impl Render for Workspace {
             Page::Rooms => self.rooms.clone().into_any_element(),
             Page::Users => self.users.clone().into_any_element(),
             Page::Discover => self.discover.clone().into_any_element(),
+            Page::Library => self.library.clone().into_any_element(),
         };
+        let playing = self.playback.read(cx).is_active();
 
         root.child(
             div().flex_1().min_h_0().flex().child(nav).child(
@@ -578,5 +599,6 @@ impl Render for Workspace {
                     .child(div().flex_1().min_h_0().child(content)),
             ),
         )
+        .when(playing, |this| this.child(self.playback.clone()))
     }
 }
