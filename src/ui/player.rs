@@ -13,6 +13,70 @@ use crate::library::Track;
 use crate::theme::palette;
 
 const POLL: Duration = Duration::from_millis(200);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Repeat {
+    #[default]
+    Off,
+    All,
+    One,
+}
+
+impl Repeat {
+    fn next(self) -> Self {
+        match self {
+            Repeat::Off => Repeat::All,
+            Repeat::All => Repeat::One,
+            Repeat::One => Repeat::Off,
+        }
+    }
+}
+
+/// A shuffled play order that starts with `first`, from a small xorshift so no random crate is needed.
+fn shuffled(len: usize, first: usize, mut seed: u64) -> Vec<usize> {
+    let mut rest: Vec<usize> = (0..len).filter(|ix| *ix != first).collect();
+    for ix in (1..rest.len()).rev() {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        rest.swap(ix, (seed % (ix as u64 + 1)) as usize);
+    }
+    let mut order = Vec::with_capacity(len);
+    if first < len {
+        order.push(first);
+    }
+    order.extend(rest);
+    order
+}
+
+/// The queue index after (or before) `current` in `order`, wrapping around when `wrap` is set.
+fn step(order: &[usize], current: usize, forward: bool, wrap: bool) -> Option<usize> {
+    let at = order.iter().position(|ix| *ix == current)?;
+    let len = order.len();
+    let next = if forward {
+        if at + 1 < len {
+            at + 1
+        } else if wrap {
+            0
+        } else {
+            return None;
+        }
+    } else if at > 0 {
+        at - 1
+    } else if wrap {
+        len - 1
+    } else {
+        return None;
+    };
+    order.get(next).copied()
+}
+
+fn seed() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0x9e37_79b9, |elapsed| elapsed.as_nanos() as u64)
+        | 1
+}
 /// Pressing previous this far into a track starts it over instead of going back.
 const RESTART_AFTER: Duration = Duration::from_secs(3);
 
@@ -20,6 +84,9 @@ const RESTART_AFTER: Duration = Duration::from_secs(3);
 pub struct Playback {
     audio: Audio,
     queue: Vec<Track>,
+    order: Vec<usize>,
+    shuffle: bool,
+    repeat: Repeat,
     cover: Option<std::path::PathBuf>,
     index: Option<usize>,
     playing: bool,
@@ -75,6 +142,9 @@ impl Playback {
         Self {
             audio,
             queue: Vec::new(),
+            order: Vec::new(),
+            shuffle: false,
+            repeat: Repeat::Off,
             cover: None,
             index: None,
             playing: false,
@@ -106,7 +176,27 @@ impl Playback {
     ) {
         self.queue = tracks;
         self.cover = cover;
+        self.reorder(start);
         self.load(start, cx);
+    }
+
+    fn reorder(&mut self, first: usize) {
+        self.order = if self.shuffle {
+            shuffled(self.queue.len(), first, seed())
+        } else {
+            (0..self.queue.len()).collect()
+        };
+    }
+
+    pub fn toggle_shuffle(&mut self, cx: &mut Context<Self>) {
+        self.shuffle = !self.shuffle;
+        self.reorder(self.index.unwrap_or(0));
+        cx.notify();
+    }
+
+    pub fn cycle_repeat(&mut self, cx: &mut Context<Self>) {
+        self.repeat = self.repeat.next();
+        cx.notify();
     }
 
     fn load(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -143,9 +233,13 @@ impl Playback {
     }
 
     pub fn next(&mut self, cx: &mut Context<Self>) {
-        match self.index {
-            Some(index) if index + 1 < self.queue.len() => self.load(index + 1, cx),
-            _ => self.stop(cx),
+        let wrap = self.repeat != Repeat::Off;
+        match self
+            .index
+            .and_then(|index| step(&self.order, index, true, wrap))
+        {
+            Some(index) => self.load(index, cx),
+            None => self.stop(cx),
         }
     }
 
@@ -153,10 +247,18 @@ impl Playback {
         let Some(index) = self.index else {
             return;
         };
-        if self.position > RESTART_AFTER || index == 0 {
-            self.load(index, cx);
-        } else {
-            self.load(index - 1, cx);
+        let wrap = self.repeat != Repeat::Off;
+        match step(&self.order, index, false, wrap) {
+            Some(previous) if self.position <= RESTART_AFTER => self.load(previous, cx),
+            _ => self.load(index, cx),
+        }
+    }
+
+    /// The end of a track: the same one again on repeat-one, otherwise the next.
+    fn finished(&mut self, cx: &mut Context<Self>) {
+        match (self.repeat, self.index) {
+            (Repeat::One, Some(index)) => self.load(index, cx),
+            _ => self.next(cx),
         }
     }
 
@@ -175,7 +277,7 @@ impl Playback {
             changed = true;
             match event {
                 AudioEvent::Position(position) => self.position = position,
-                AudioEvent::Ended => self.next(cx),
+                AudioEvent::Ended => self.finished(cx),
                 AudioEvent::Failed(error) => {
                     let name = self
                         .current()
@@ -273,6 +375,16 @@ impl Render for Playback {
                     .items_center()
                     .gap_1()
                     .child(
+                        kit::toggle_icon_button(
+                            "shuffle",
+                            IconName::Shuffle,
+                            "shuffle",
+                            self.shuffle,
+                            &p,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_shuffle(cx))),
+                    )
+                    .child(
                         kit::icon_button("previous", IconName::SkipBack, "previous")
                             .on_click(cx.listener(|this, _, _, cx| this.previous(cx))),
                     )
@@ -291,6 +403,24 @@ impl Render for Playback {
                     .child(
                         kit::icon_button("next", IconName::SkipForward, "next")
                             .on_click(cx.listener(|this, _, _, cx| this.next(cx))),
+                    )
+                    .child(
+                        kit::toggle_icon_button(
+                            "repeat",
+                            if self.repeat == Repeat::One {
+                                IconName::Repeat1
+                            } else {
+                                IconName::Repeat
+                            },
+                            match self.repeat {
+                                Repeat::Off => "repeat: off",
+                                Repeat::All => "repeat: all",
+                                Repeat::One => "repeat: this track",
+                            },
+                            self.repeat != Repeat::Off,
+                            &p,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| this.cycle_repeat(cx))),
                     ),
             )
             .child(
@@ -324,5 +454,31 @@ impl Render for Playback {
                 this.opacity(0.9)
             })
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Repeat, shuffled, step};
+
+    #[test]
+    fn shuffles_every_track_once_starting_with_the_chosen_one() {
+        let order = shuffled(8, 3, 12345);
+        assert_eq!(order[0], 3);
+        let mut sorted = order.clone();
+        sorted.sort();
+        assert_eq!(sorted, (0..8).collect::<Vec<_>>());
+        assert_ne!(order, shuffled(8, 3, 999));
+    }
+
+    #[test]
+    fn steps_through_the_order_and_wraps_only_on_repeat() {
+        let order = [2, 0, 1];
+        assert_eq!(step(&order, 2, true, false), Some(0));
+        assert_eq!(step(&order, 1, true, false), None);
+        assert_eq!(step(&order, 1, true, true), Some(2));
+        assert_eq!(step(&order, 2, false, false), None);
+        assert_eq!(step(&order, 2, false, true), Some(1));
+        assert_eq!(Repeat::Off.next().next().next(), Repeat::Off);
     }
 }

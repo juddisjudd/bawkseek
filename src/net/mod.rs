@@ -144,6 +144,8 @@ pub struct DownloadRow {
     pub name: String,
     pub folder: String,
     pub local_dir: PathBuf,
+    /// Where the finished file was saved, which can differ from the planned name when one was taken.
+    pub saved: Option<PathBuf>,
     pub size: u64,
     pub state: DlState,
 }

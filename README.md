@@ -20,7 +20,7 @@ A Soulseek desktop client for Windows, built in Rust with [GPUI Kit](https://gpu
 - **Uploads**: who downloads from you, with progress, speed and queue place. Cancel a running upload, clear finished ones, and set how many people can download at once (upload slots, 1 to 50, default 10).
 - **Reconnects**: a dropped server connection reconnects by itself. Queued downloads resume when their peer is back.
 - **Notifications**: new messages, finished folders and new wishlist results show as toasts, and in the Windows notification center when bawkseek is in the background.
-- **Library**: your downloads and shared folders as an album grid with cover art, read from the tags or a cover image in the folder, and a player bar with seek and volume. Plays MP3, FLAC, M4A/AAC, ALAC, OGG Vorbis, WAV and AIFF. The scan runs the first time you open the page and remembers unchanged files.
+- **Library**: your downloads and shared folders as an album grid with cover art, read from the tags or a cover image in the folder, and a player bar with seek, volume, shuffle and repeat. Space plays and pauses when no text box has focus. Finished downloads have a play button, and the library rescans itself a few seconds after downloads finish. Plays MP3, FLAC, M4A/AAC, ALAC, OGG Vorbis, WAV and AIFF. The scan runs the first time you open the page and remembers unchanged files.
 - **Settings**: download folder and speed limit, listening port with automatic UPnP port mapping, away status, privileges, password change.
 - **Appearance**: bawk dark, bawk light or follow Windows, plus 30 named themes from bawkterm (gruvbox, catppuccin, tokyo night, nord, dracula and more).
 

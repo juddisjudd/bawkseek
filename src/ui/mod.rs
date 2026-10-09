@@ -34,7 +34,7 @@ use player::Playback;
 use rooms::RoomsView;
 use search::SearchView;
 use settings::{SettingsEvent, SettingsView};
-use transfers::TransfersView;
+use transfers::{PlayFiles, TransfersView};
 use uploads::{UploadsEvent, UploadsView};
 use users::UsersView;
 
@@ -82,6 +82,8 @@ pub struct Workspace {
     settings: Entity<SettingsView>,
     library: Entity<LibraryView>,
     playback: Entity<Playback>,
+    focus: FocusHandle,
+    finished_downloads: usize,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -126,6 +128,7 @@ impl Workspace {
             cx.subscribe_in(&uploads, window, Self::on_uploads),
             cx.subscribe_in(&search, window, Self::open_user),
             cx.subscribe_in(&transfers, window, Self::open_user),
+            cx.subscribe_in(&transfers, window, Self::play_files),
             cx.subscribe_in(&uploads, window, Self::open_user),
             cx.subscribe_in(&messages, window, Self::open_user),
             cx.subscribe_in(&rooms, window, Self::open_user),
@@ -155,6 +158,8 @@ impl Workspace {
             session,
             config,
             page: Page::Search,
+            focus: cx.focus_handle(),
+            finished_downloads: 0,
             status: Status::Offline,
             pending: None,
             login,
@@ -220,6 +225,17 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let finished = session
+            .read(cx)
+            .downloads
+            .iter()
+            .filter(|row| row.state == crate::net::DlState::Completed)
+            .count();
+        if finished > self.finished_downloads {
+            self.library
+                .update(cx, |library, cx| library.rescan_soon(cx));
+        }
+        self.finished_downloads = finished;
         let status = session.read(cx).status.clone();
         if status == self.status {
             return;
@@ -455,6 +471,45 @@ impl Workspace {
         }
     }
 
+    /// Plays finished downloads; their tags and cover are read off the UI thread first.
+    fn play_files(
+        &mut self,
+        _: &Entity<TransfersView>,
+        event: &PlayFiles,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let (Some(data), files) = (config::data_dir(), event.0.clone()) else {
+            return;
+        };
+        let playback = self.playback.clone();
+        cx.spawn(async move |_, cx| {
+            let album = cx
+                .background_executor()
+                .spawn(async move { crate::library::album_from(&files, &data) })
+                .await;
+            if let Some(album) = album {
+                playback.update(cx, |playback, cx| {
+                    playback.play(album.tracks, 0, album.cover, cx)
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// Space plays or pauses whenever no text box has the keyboard.
+    fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let keystroke = &event.keystroke;
+        if keystroke.key != "space" || keystroke.modifiers.modified() {
+            return;
+        }
+        if window.focused(cx).is_some() && !self.focus.is_focused(window) {
+            return;
+        }
+        self.playback.update(cx, |playback, cx| playback.toggle(cx));
+        cx.stop_propagation();
+    }
+
     fn select(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
         self.page = page;
         self.messages.update(cx, |messages, cx| {
@@ -485,8 +540,9 @@ impl Workspace {
                     library.set_roots(roots);
                     library.ensure_scanned(cx);
                 });
+                window.focus(&self.focus, cx);
             }
-            _ => {}
+            _ => window.focus(&self.focus, cx),
         }
         cx.notify();
     }
@@ -554,6 +610,8 @@ impl Render for Workspace {
             .size_full()
             .flex()
             .flex_col()
+            .track_focus(&self.focus)
+            .on_key_down(cx.listener(Self::on_key_down))
             .bg(p.bg)
             .text_color(p.text)
             .text_size(px(13.))

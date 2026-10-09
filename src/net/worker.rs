@@ -841,6 +841,7 @@ impl Worker {
                 name: name.to_string(),
                 folder,
                 local_dir,
+                saved: None,
                 size: wanted.size,
                 state: DlState::Queued { position: None },
             },
@@ -900,6 +901,9 @@ impl Worker {
             return;
         }
         let finished = state == DlState::Completed;
+        if finished {
+            row.view.saved = update.path.clone();
+        }
         row.view.state = state;
         self.rows_dirty = true;
         if finished {

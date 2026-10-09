@@ -262,6 +262,44 @@ fn cover_for(album: &Album, covers: &Path) -> Option<PathBuf> {
     write_thumbnail(&bytes, &out).then_some(out)
 }
 
+fn album_of(tracks: Vec<Track>) -> Album {
+    let first = &tracks[0];
+    let artist = [&first.album_artist, &first.artist]
+        .into_iter()
+        .find(|name| !name.is_empty())
+        .cloned()
+        .unwrap_or_else(|| "unknown artist".into());
+    Album {
+        title: first.album.clone(),
+        artist,
+        year: tracks.iter().find_map(|track| track.year),
+        duration: tracks.iter().map(|track| track.duration).sum(),
+        cover: None,
+        tracks,
+    }
+}
+
+/// Files played straight from the transfer list, in the order given, which the library may not have scanned yet.
+pub fn album_from(paths: &[PathBuf], data_dir: &Path) -> Option<Album> {
+    let tracks: Vec<Track> = paths
+        .iter()
+        .filter_map(|path| {
+            let meta = fs::metadata(path).ok()?;
+            Some(read_track(path, meta.len(), modified(&meta)))
+        })
+        .collect();
+    if tracks.is_empty() {
+        return None;
+    }
+    let mut album = album_of(tracks);
+    album.cover = cover_for(&album, &data_dir.join("covers"));
+    Some(album)
+}
+
+pub fn is_playable(path: &Path) -> bool {
+    PLAYABLE.contains(&extension(path).as_str())
+}
+
 fn group(tracks: Vec<Track>) -> Vec<Album> {
     let mut albums: BTreeMap<(String, String), Vec<Track>> = BTreeMap::new();
     for track in tracks {
@@ -277,20 +315,7 @@ fn group(tracks: Vec<Track>) -> Vec<Album> {
                     &b.path,
                 ))
             });
-            let first = &tracks[0];
-            let artist = [&first.album_artist, &first.artist]
-                .into_iter()
-                .find(|name| !name.is_empty())
-                .cloned()
-                .unwrap_or_else(|| "unknown artist".into());
-            Album {
-                title: first.album.clone(),
-                artist,
-                year: tracks.iter().find_map(|track| track.year),
-                duration: tracks.iter().map(|track| track.duration).sum(),
-                cover: None,
-                tracks,
-            }
+            album_of(tracks)
         })
         .collect();
     albums.sort_by_cached_key(|album| {

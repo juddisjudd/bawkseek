@@ -84,6 +84,21 @@ pub fn icon_button(id: impl Into<ElementId>, icon: IconName, tooltip: &'static s
         .tooltip(tooltip)
 }
 
+/// An icon button that shows whether its setting is on, such as shuffle.
+pub fn toggle_icon_button(
+    id: impl Into<ElementId>,
+    icon: IconName,
+    tooltip: &'static str,
+    active: bool,
+    p: &Palette,
+) -> Button {
+    Button::new(id)
+        .ghost()
+        .small()
+        .icon(Icon::new(icon).text_color(if active { p.yolk } else { p.icon }))
+        .tooltip(tooltip)
+}
+
 pub fn progress_bar(fraction: f32, color: Hsla, p: &Palette) -> Div {
     div()
         .h(px(3.))

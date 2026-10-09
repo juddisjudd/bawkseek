@@ -68,6 +68,32 @@ impl TransfersView {
         self.session.read(cx).send(command);
     }
 
+    /// Plays a finished file, then the finished files after it in the same folder.
+    fn play_from(&mut self, id: u64, cx: &mut Context<Self>) {
+        let Some(layout) = &self.layout else {
+            return;
+        };
+        let Some(group) = layout
+            .groups
+            .iter()
+            .find(|group| group.rows.iter().any(|ix| layout.downloads[*ix].id == id))
+        else {
+            return;
+        };
+        let files: Vec<PathBuf> = group
+            .rows
+            .iter()
+            .map(|ix| &layout.downloads[*ix])
+            .skip_while(|row| row.id != id)
+            .filter(|row| row.state == DlState::Completed)
+            .filter_map(|row| row.saved.clone())
+            .filter(|path| crate::library::is_playable(path))
+            .collect();
+        if !files.is_empty() {
+            cx.emit(PlayFiles(files));
+        }
+    }
+
     fn refresh_layout(&mut self, cx: &App) {
         let downloads = self.session.read(cx).downloads.clone();
         let source = Arc::as_ptr(&downloads) as usize;
@@ -293,6 +319,17 @@ fn file_row(
             kit::icon_button(("retry", id), IconName::RotateCw, "retry")
                 .on_click(cx.listener(move |this, _, _, cx| this.send(Command::Retry(id), cx))),
         ),
+        DlState::Completed
+            if row
+                .saved
+                .as_deref()
+                .is_some_and(crate::library::is_playable) =>
+        {
+            Some(
+                kit::icon_button(("play", id), IconName::Play, "play")
+                    .on_click(cx.listener(move |this, _, _, cx| this.play_from(id, cx))),
+            )
+        }
         _ => None,
     };
     let secondary = if row.state.is_live() {
@@ -374,6 +411,11 @@ fn file_row(
 }
 
 impl EventEmitter<UserAction> for TransfersView {}
+
+/// Finished files to play, the first one first.
+pub struct PlayFiles(pub Vec<PathBuf>);
+
+impl EventEmitter<PlayFiles> for TransfersView {}
 
 impl Render for TransfersView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

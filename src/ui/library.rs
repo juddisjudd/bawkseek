@@ -21,6 +21,7 @@ const GAP: f32 = 20.;
 const ROW: f32 = CARD + 64.;
 /// Covers kept decoded at once; a screenful is a few dozen.
 const COVER_CACHE: usize = 160;
+const RESCAN_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
 /// The sidebar and page padding, which the album grid cannot use.
 const CHROME: f32 = 208. + 80.;
 
@@ -33,6 +34,7 @@ pub struct LibraryView {
     filter: Entity<InputState>,
     covers: Entity<CoverCache>,
     scroll: VirtualListScrollHandle,
+    rescan: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -57,6 +59,7 @@ impl LibraryView {
             filter,
             covers: CoverCache::new(COVER_CACHE, cx),
             scroll: VirtualListScrollHandle::new(),
+            rescan: None,
             _subscriptions: subscriptions,
         }
     }
@@ -71,6 +74,20 @@ impl LibraryView {
         if self.library.is_none() {
             self.scan(cx);
         }
+    }
+
+    /// Rescans a few seconds after downloads finish, once per burst, and only if the library was ever opened.
+    pub fn rescan_soon(&mut self, cx: &mut Context<Self>) {
+        if self.library.is_none() || self.rescan.is_some() {
+            return;
+        }
+        self.rescan = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(RESCAN_DELAY).await;
+            let _ = this.update(cx, |this, cx| {
+                this.rescan = None;
+                this.scan(cx);
+            });
+        }));
     }
 
     fn scan(&mut self, cx: &mut Context<Self>) {
@@ -90,7 +107,16 @@ impl LibraryView {
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.scanning = false;
-                this.open = None;
+                let open = this.open.and_then(|ix| {
+                    let album = this.library.as_ref()?.albums.get(ix)?;
+                    Some((album.artist.clone(), album.title.clone()))
+                });
+                this.open = open.and_then(|(artist, title)| {
+                    scanned
+                        .albums
+                        .iter()
+                        .position(|album| album.artist == artist && album.title == title)
+                });
                 this.library = Some(Arc::new(scanned));
                 cx.notify();
             });
