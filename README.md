@@ -1,6 +1,14 @@
 # bawkseek
 
-bawkseek is a Windows app for [Soulseek](https://www.slsknet.org), the long-running network where people share music straight from their own computers. Search everyone's shared folders, download whole albums, chat, and play your music, all in one window. It looks and feels like [bawkterm](https://bawkterm.com).
+[![Latest release](https://img.shields.io/github/v/release/juddisjudd/bawkseek?style=flat-square&labelColor=13100f&color=f6d56b&label=release)](https://github.com/juddisjudd/bawkseek/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/juddisjudd/bawkseek/total?style=flat-square&labelColor=13100f&color=f6d56b)](https://github.com/juddisjudd/bawkseek/releases)
+[![Build](https://img.shields.io/github/actions/workflow/status/juddisjudd/bawkseek/release.yml?style=flat-square&labelColor=13100f&label=build)](https://github.com/juddisjudd/bawkseek/actions/workflows/release.yml)
+[![Windows 10 and 11](https://img.shields.io/badge/windows-10%20%7C%2011-f6d56b?style=flat-square&labelColor=13100f)](#1-download)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-f6d56b?style=flat-square&labelColor=13100f)](LICENSE)
+
+bawkseek is a Windows app for [Soulseek](https://www.slsknet.org), the long-running network where people share music straight from their own computers. Search everyone's shared folders, download whole albums, chat, and play your music, all in one window.
+
+![The library, with album covers and the player bar](docs/screenshots/library.png)
 
 ## Get started
 
@@ -52,6 +60,20 @@ Open **library** to see your downloads and shared folders as albums with their c
 - **Themes:** dark, light, follow Windows, or one of 30 named themes such as gruvbox, catppuccin, tokyo night, nord and dracula.
 - **Notifications** for new messages, finished albums and new wishlist results, also in the Windows notification center.
 - **Reconnects** by itself when the connection drops, and rejoins your rooms.
+
+## A closer look
+
+**Search** groups results by folder and colors each format, so a 24-bit FLAC album stands out from a 128 kbps MP3 at a glance.
+
+![Search results grouped by folder, one album opened to show its files](docs/screenshots/search.png)
+
+**Albums** open to their track list. Click any track to start playing from there.
+
+![An album page with its track list and the player bar](docs/screenshots/album.png)
+
+**Themes:** pick from 30, or let bawkseek follow Windows between dark and light.
+
+![The theme picker in settings, with catppuccin mocha applied](docs/screenshots/themes.png)
 
 ## Search tips
 
