@@ -12,5 +12,5 @@ pub mod wire;
 
 pub use client::{
     Client, Config, DEFAULT_LISTEN_PORT, DEFAULT_SERVER, Event, MAJOR_VERSION, MINOR_VERSION,
-    Profile, Request, Session,
+    Profile, Request, SearchScope, Session,
 };

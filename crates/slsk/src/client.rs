@@ -1,5 +1,6 @@
 use std::io;
 use std::net::Ipv4Addr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
@@ -25,6 +26,10 @@ pub struct Config {
     pub password: String,
     pub listen_port: u16,
     pub reconnect: bool,
+    pub shared_dirs: Vec<PathBuf>,
+    /// Where scanned audio attributes are kept between runs, so a rescan only reads new or changed files.
+    pub share_cache: Option<PathBuf>,
+    pub accept_children: bool,
 }
 
 impl Config {
@@ -35,6 +40,9 @@ impl Config {
             password: password.into(),
             listen_port: DEFAULT_LISTEN_PORT,
             reconnect: true,
+            shared_dirs: Vec::new(),
+            share_cache: None,
+            accept_children: true,
         }
     }
 }
@@ -103,6 +111,18 @@ pub enum Event {
         reason: String,
     },
     SearchReply(SearchReply),
+    SharesScanned {
+        dirs: usize,
+        files: usize,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SearchScope {
+    Network,
+    User(String),
+    Room(String),
+    Wishlist,
 }
 
 /// What we tell peers about ourselves when they ask.
@@ -125,6 +145,14 @@ pub(crate) enum Command {
     },
     SetIgnored(Vec<String>),
     SetProfile(Profile),
+    Search {
+        token: u32,
+        scope: SearchScope,
+        query: String,
+    },
+    ForgetSearch(u32),
+    SetShares(Vec<PathBuf>),
+    Rescan,
 }
 
 /// A running Soulseek session: it connects, logs in, reconnects, and reports what happens as events.
@@ -207,6 +235,30 @@ impl Client {
 
     pub fn set_profile(&self, profile: Profile) {
         self.command(Command::SetProfile(profile));
+    }
+
+    /// Starts a search and returns its token; replies carry the token until the search is forgotten.
+    pub fn search(&self, scope: SearchScope, query: &str) -> u32 {
+        let token = self.token();
+        self.command(Command::Search {
+            token,
+            scope,
+            query: query.to_string(),
+        });
+        token
+    }
+
+    pub fn forget_search(&self, token: u32) {
+        self.command(Command::ForgetSearch(token));
+    }
+
+    /// Replaces the shared folders and scans them in the background.
+    pub fn set_shares(&self, dirs: Vec<PathBuf>) {
+        self.command(Command::SetShares(dirs));
+    }
+
+    pub fn rescan(&self) {
+        self.command(Command::Rescan);
     }
 
     pub fn disconnect(&self) {

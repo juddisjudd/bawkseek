@@ -58,10 +58,7 @@ impl Engine {
                 let info = self.own_user_info();
                 self.send_peer(username, PeerMessage::UserInfoResponse(info));
             }
-            PeerMessage::SharedFileListRequest => {
-                let list = self.shared_file_list(username);
-                self.send_peer(username, PeerMessage::SharedFileListResponse(list));
-            }
+            PeerMessage::SharedFileListRequest => self.answer_browse(username),
             PeerMessage::FolderContentsRequest { token, folder } => {
                 let dirs = self.folder_contents(username, &folder);
                 self.send_peer(

@@ -5,6 +5,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::task::AbortHandle;
 use tokio::time::Instant;
 
 use crate::client::{Event, next_token};
@@ -26,6 +27,7 @@ pub(crate) struct PeerConn {
     pub(crate) username: String,
     pub(crate) kind: ConnectionType,
     pub(crate) writer: UnboundedSender<Vec<u8>>,
+    reader: AbortHandle,
     last_active: Instant,
 }
 
@@ -103,7 +105,10 @@ impl Engine {
 
     /// Sends a peer message over the open connection to `username`, opening one first if needed.
     pub(crate) fn send_peer(&mut self, username: &str, message: PeerMessage) {
-        let frame = message.encode();
+        self.send_peer_frame(username, message.encode());
+    }
+
+    pub(crate) fn send_peer_frame(&mut self, username: &str, frame: Vec<u8>) {
         let key = (username.to_string(), ConnectionType::Peer);
         if let Some(conn) = self.peers.by_user.get(&key).copied()
             && let Some(peer) = self.peers.conns.get_mut(&conn)
@@ -173,36 +178,70 @@ impl Engine {
             .map(|(token, _)| *token)
             .collect();
         for token in tokens {
-            let Some(attempt) = self.peers.attempts.get_mut(&token) else {
-                continue;
-            };
-            if ip.is_unspecified() || port == 0 {
-                attempt.direct = Direct::Failed;
-                self.maybe_fail(token);
-                continue;
-            }
-            attempt.direct = Direct::Trying;
-            let init = PeerInit::PeerInit {
-                username: self.config.username.clone(),
-                kind: attempt.kind,
-                token: 0,
-            }
-            .encode();
-            let inputs = self.inputs.clone();
-            tokio::spawn(async move {
-                let addr = format!("{ip}:{port}");
-                let result = async {
-                    let mut stream = connect(&addr, DIRECT_TIMEOUT).await?;
-                    stream.write_all(&init).await?;
-                    Ok::<_, std::io::Error>(stream)
-                }
-                .await;
-                let _ = inputs.send(match result {
-                    Ok(stream) => Input::Outbound { token, stream },
-                    Err(_) => Input::OutboundFailed { token },
-                });
-            });
+            self.dial(token, ip, port);
         }
+    }
+
+    /// Like `open_peer`, for a peer whose address we already have.
+    pub(crate) fn open_peer_at(
+        &mut self,
+        username: &str,
+        kind: ConnectionType,
+        purpose: Purpose,
+        ip: Ipv4Addr,
+        port: u16,
+    ) -> u32 {
+        let token = next_token(&self.tokens);
+        self.peers.attempts.insert(
+            token,
+            Attempt {
+                username: username.to_string(),
+                kind,
+                purpose,
+                started: Instant::now(),
+                direct: Direct::Waiting,
+                indirect_failed: false,
+            },
+        );
+        self.send_server(ServerRequest::ConnectToPeer {
+            token,
+            username: username.to_string(),
+            kind,
+        });
+        self.dial(token, ip, port);
+        token
+    }
+
+    fn dial(&mut self, token: u32, ip: Ipv4Addr, port: u16) {
+        let Some(attempt) = self.peers.attempts.get_mut(&token) else {
+            return;
+        };
+        if ip.is_unspecified() || port == 0 {
+            attempt.direct = Direct::Failed;
+            self.maybe_fail(token);
+            return;
+        }
+        attempt.direct = Direct::Trying;
+        let init = PeerInit::PeerInit {
+            username: self.config.username.clone(),
+            kind: attempt.kind,
+            token: 0,
+        }
+        .encode();
+        let inputs = self.inputs.clone();
+        tokio::spawn(async move {
+            let addr = format!("{ip}:{port}");
+            let result = async {
+                let mut stream = connect(&addr, DIRECT_TIMEOUT).await?;
+                stream.write_all(&init).await?;
+                Ok::<_, std::io::Error>(stream)
+            }
+            .await;
+            let _ = inputs.send(match result {
+                Ok(stream) => Input::Outbound { token, stream },
+                Err(_) => Input::OutboundFailed { token },
+            });
+        });
     }
 
     pub(crate) fn on_outbound(&mut self, token: u32, stream: TcpStream) {
@@ -360,20 +399,22 @@ impl Engine {
         let (mut read, write) = stream.into_split();
         let writer = spawn_writer(write);
         let inputs = self.inputs.clone();
-        tokio::spawn(async move {
+        let reader = tokio::spawn(async move {
             while let Ok(frame) = read_frame(&mut read).await {
                 if inputs.send(Input::PeerFrame { conn, frame }).is_err() {
                     return;
                 }
             }
             let _ = inputs.send(Input::PeerClosed { conn });
-        });
+        })
+        .abort_handle();
         self.peers.conns.insert(
             conn,
             PeerConn {
                 username: username.clone(),
                 kind,
                 writer,
+                reader,
                 last_active: Instant::now(),
             },
         );
@@ -408,6 +449,7 @@ impl Engine {
 
     pub(crate) fn on_peer_closed(&mut self, conn: ConnId) {
         if let Some(peer) = self.peers.conns.remove(&conn) {
+            peer.reader.abort();
             let key = (peer.username.clone(), peer.kind);
             if self.peers.by_user.get(&key) == Some(&conn) {
                 self.peers.by_user.remove(&key);

@@ -3,19 +3,20 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 use std::time::Duration;
 
+use tokio::net::TcpStream;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tokio::time::{Instant, MissedTickBehavior, interval};
 
-use tokio::net::TcpStream;
-
 use crate::client::{Command, Config, Event, MAJOR_VERSION, MINOR_VERSION, Profile, Session};
+use crate::distributed::Distributed;
 use crate::io::{connect, read_frame, spawn_writer, split_u32};
 use crate::peers::{ConnId, Peers};
 use crate::proto::peer::PeerInit;
 use crate::proto::server::{LoginResponse, ServerRequest, ServerResponse};
-use crate::proto::types::ConnectionType;
-use crate::proto::types::UserStatus;
+use crate::proto::types::{ConnectionType, UserStatus};
 use crate::requests::Waiting;
+use crate::search::Searches;
+use crate::shares::ShareIndex;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 /// The server omits its login reply to banned users, so a silent server counts as a lost connection.
@@ -69,6 +70,8 @@ pub(crate) enum Input {
     PeerClosed {
         conn: ConnId,
     },
+    Scanned(Arc<ShareIndex>),
+    BrowseFrame(Arc<Vec<u8>>),
 }
 
 struct ServerLink {
@@ -85,6 +88,14 @@ pub(crate) struct Engine {
     pub(crate) peers: Peers,
     pub(crate) waiting: Waiting,
     pub(crate) profile: Profile,
+    pub(crate) shares: Arc<ShareIndex>,
+    pub(crate) scanning: bool,
+    pub(crate) rescan_again: bool,
+    pub(crate) browse_frame: Option<Arc<Vec<u8>>>,
+    pub(crate) browse_waiting: Vec<String>,
+    pub(crate) searches: Searches,
+    pub(crate) distributed: Distributed,
+    pub(crate) excluded_phrases: Vec<String>,
     ignored: HashSet<String>,
     server: Option<ServerLink>,
     generation: u64,
@@ -95,6 +106,8 @@ pub(crate) struct Engine {
     status: UserStatus,
     rooms: BTreeSet<String>,
     watched: BTreeSet<String>,
+    likes: BTreeSet<String>,
+    hates: BTreeSet<String>,
     public_feed: bool,
 }
 
@@ -105,6 +118,7 @@ impl Engine {
         inputs: UnboundedSender<Input>,
         tokens: Arc<AtomicU32>,
     ) -> Self {
+        let distributed = Distributed::new(config.accept_children);
         Self {
             config,
             events,
@@ -113,6 +127,14 @@ impl Engine {
             peers: Peers::default(),
             waiting: Waiting::default(),
             profile: Profile::default(),
+            shares: Arc::new(ShareIndex::default()),
+            scanning: false,
+            rescan_again: false,
+            browse_frame: None,
+            browse_waiting: Vec::new(),
+            searches: Searches::default(),
+            distributed,
+            excluded_phrases: Vec::new(),
             ignored: HashSet::new(),
             server: None,
             generation: 0,
@@ -123,12 +145,17 @@ impl Engine {
             status: UserStatus::Online,
             rooms: BTreeSet::new(),
             watched: BTreeSet::new(),
+            likes: BTreeSet::new(),
+            hates: BTreeSet::new(),
             public_feed: false,
         }
     }
 
     pub(crate) async fn run(mut self, mut inputs: UnboundedReceiver<Input>) {
         self.start_listener();
+        if !self.config.shared_dirs.is_empty() {
+            self.rescan();
+        }
         self.connect_server();
         let mut tick = interval(Duration::from_secs(1));
         tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -199,6 +226,8 @@ impl Engine {
             } => self.on_file_incoming(username, token, stream),
             Input::PeerFrame { conn, frame } => self.on_peer_frame(conn, frame),
             Input::PeerClosed { conn } => self.on_peer_closed(conn),
+            Input::Scanned(index) => self.on_scanned(index),
+            Input::BrowseFrame(frame) => self.on_browse_frame(frame),
         }
     }
 
@@ -222,6 +251,17 @@ impl Engine {
             } => self.request_folder(username, token, folder),
             Command::SetIgnored(usernames) => self.ignored = usernames.into_iter().collect(),
             Command::SetProfile(profile) => self.profile = profile,
+            Command::Search {
+                token,
+                scope,
+                query,
+            } => self.start_search(token, scope, query),
+            Command::ForgetSearch(token) => self.forget_search(token),
+            Command::SetShares(dirs) => {
+                self.config.shared_dirs = dirs;
+                self.rescan();
+            }
+            Command::Rescan => self.rescan(),
         }
     }
 
@@ -239,6 +279,18 @@ impl Engine {
             }
             ServerRequest::UnwatchUser(user) => {
                 self.watched.remove(user);
+            }
+            ServerRequest::AddThingILike(item) => {
+                self.likes.insert(item.clone());
+            }
+            ServerRequest::RemoveThingILike(item) => {
+                self.likes.remove(item);
+            }
+            ServerRequest::AddThingIHate(item) => {
+                self.hates.insert(item.clone());
+            }
+            ServerRequest::RemoveThingIHate(item) => {
+                self.hates.remove(item);
             }
             ServerRequest::SetStatus(status) => self.status = *status,
             ServerRequest::JoinGlobalRoom => self.public_feed = true,
@@ -384,15 +436,40 @@ impl Engine {
                 ..
             } => self.on_connect_to_peer(username, kind, ip, port, token),
             ServerResponse::CantConnectToPeer(token) => self.on_cant_connect(token),
+            ServerResponse::PossibleParents(parents) => self.on_possible_parents(parents),
+            ServerResponse::EmbeddedMessage { code, payload } => self.on_embedded(code, payload),
+            ServerResponse::FileSearch {
+                username,
+                token,
+                query,
+            } => self.answer_search(&username, token, &query),
+            ServerResponse::ResetDistributed => self.reset_distributed(),
+            ServerResponse::ParentMinSpeed(speed) => self.set_parent_min_speed(speed),
+            ServerResponse::ParentSpeedRatio(ratio) => self.set_parent_speed_ratio(ratio),
             message => {
-                if let ServerResponse::MessageUser { id, .. } = &message {
-                    self.send_server(ServerRequest::MessageAcked(*id));
-                }
-                if let ServerResponse::JoinRoom(joined) = &message {
-                    self.rooms.insert(joined.room.clone());
-                }
-                if let ServerResponse::LeaveRoom(room) = &message {
-                    self.rooms.remove(room);
+                match &message {
+                    ServerResponse::MessageUser { id, .. } => {
+                        self.send_server(ServerRequest::MessageAcked(*id));
+                    }
+                    ServerResponse::JoinRoom(joined) => {
+                        self.rooms.insert(joined.room.clone());
+                    }
+                    ServerResponse::LeaveRoom(room) => {
+                        self.rooms.remove(room);
+                    }
+                    ServerResponse::ExcludedSearchPhrases(phrases) => {
+                        self.excluded_phrases =
+                            phrases.iter().map(|phrase| phrase.to_lowercase()).collect();
+                    }
+                    ServerResponse::WatchUser {
+                        username, stats, ..
+                    }
+                    | ServerResponse::GetUserStats { username, stats }
+                        if *username == self.config.username =>
+                    {
+                        self.set_own_speed(stats.avg_speed);
+                    }
+                    _ => {}
                 }
                 self.emit(Event::Server(message));
             }
@@ -402,10 +479,18 @@ impl Engine {
     /// What the server expects right after login, then whatever the last session had set up.
     fn after_login(&mut self) {
         self.send_server(ServerRequest::SetWaitPort(self.config.listen_port));
-        self.send_server(ServerRequest::SharedFoldersFiles { dirs: 0, files: 0 });
-        self.send_server(ServerRequest::HaveNoParent(true));
+        let (dirs, files) = self.share_counts();
+        self.send_server(ServerRequest::SharedFoldersFiles { dirs, files });
         self.send_server(ServerRequest::SetStatus(self.status));
+        self.reset_distributed();
+        self.send_server(ServerRequest::WatchUser(self.config.username.clone()));
         self.send_server(ServerRequest::CheckPrivileges);
+        for item in self.likes.clone() {
+            self.send_server(ServerRequest::AddThingILike(item));
+        }
+        for item in self.hates.clone() {
+            self.send_server(ServerRequest::AddThingIHate(item));
+        }
         if self.public_feed {
             self.send_server(ServerRequest::JoinGlobalRoom);
         }
