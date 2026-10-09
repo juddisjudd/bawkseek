@@ -7,7 +7,7 @@ mod peers;
 pub mod proto;
 mod requests;
 mod search;
-mod shares;
+pub mod shares;
 mod transfers;
 mod uploads;
 pub mod wire;

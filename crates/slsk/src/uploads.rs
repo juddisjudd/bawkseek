@@ -298,7 +298,6 @@ impl Engine {
         let (username, filename) = (upload.username.clone(), upload.filename.clone());
         match result {
             Ok(speed) => {
-                self.profile.total_uploads += 1;
                 self.send_server(ServerRequest::SendUploadSpeed(speed as u32));
                 self.set_upload(id, TransferState::Done);
             }

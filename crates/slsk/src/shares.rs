@@ -226,22 +226,38 @@ impl ScanCache {
     }
 }
 
-/// Walks the shared folders. Each root appears under its own folder name, numbered when two roots share a name.
+/// The name other users see for each shared folder: its own name, numbered when two share one. Missing folders get none.
+pub fn virtual_roots(roots: &[PathBuf]) -> Vec<Option<String>> {
+    let mut used: HashSet<String> = HashSet::new();
+    roots
+        .iter()
+        .map(|root| {
+            if !root.is_dir() {
+                return None;
+            }
+            let base = root.file_name().map_or_else(
+                || "shared".into(),
+                |name| name.to_string_lossy().into_owned(),
+            );
+            let mut name = base.clone();
+            let mut n = 2;
+            while !used.insert(name.to_lowercase()) {
+                name = format!("{base} ({n})");
+                n += 1;
+            }
+            Some(name)
+        })
+        .collect()
+}
+
+/// Walks the shared folders, each under its virtual root name.
 pub fn scan(roots: &[PathBuf], cache: &mut ScanCache) -> Vec<SharedFile> {
     let mut seen_cache = HashMap::with_capacity(cache.entries.len());
-    let mut used_names: HashSet<String> = HashSet::new();
     let mut files = Vec::new();
-    for root in roots {
-        let base = root
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_else(|| root.to_string_lossy().replace([':', '\\', '/'], ""));
-        let mut name = base.clone();
-        let mut n = 2;
-        while !used_names.insert(name.to_lowercase()) {
-            name = format!("{base} ({n})");
-            n += 1;
-        }
+    for (root, name) in roots.iter().zip(virtual_roots(roots)) {
+        let Some(name) = name else {
+            continue;
+        };
         let mut stack = vec![(root.clone(), name)];
         while let Some((dir, virtual_dir)) = stack.pop() {
             let Ok(entries) = fs::read_dir(&dir) else {

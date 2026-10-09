@@ -1,9 +1,11 @@
-use std::time::{Duration, Instant};
+use slsk::proto::server::{ServerRequest, ServerResponse};
+use slsk::proto::types::Recommendation;
 
-use soulseek_rs::{Client, Recommendation, SimilarUser};
-
-const WINDOW: Duration = Duration::from_secs(30);
-const REFRESH: Duration = Duration::from_secs(1);
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SimilarUser {
+    pub username: String,
+    pub weight: u32,
+}
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ItemDetails {
@@ -21,15 +23,12 @@ pub struct Discovery {
     pub item: Option<ItemDetails>,
 }
 
-/// Interests and the recommendations built from them; replies carry no signal, so they are polled for a while.
+/// Interests and the recommendations the server builds from them.
 #[derive(Default)]
 pub struct Discover {
     likes: Vec<String>,
     dislikes: Vec<String>,
-    item: Option<String>,
-    until: Option<Instant>,
-    checked: Option<Instant>,
-    sent: Discovery,
+    discovery: Discovery,
 }
 
 impl Discover {
@@ -38,17 +37,18 @@ impl Discover {
         self.dislikes = dislikes;
     }
 
-    /// The library keeps interests in memory only, so the saved ones are announced at login.
-    pub fn announce(&self, client: &Client) {
-        for like in &self.likes {
-            let _ = client.add_interest(like);
-        }
-        for dislike in &self.dislikes {
-            let _ = client.add_dislike(dislike);
-        }
+    /// The server forgets interests between sessions, so the saved ones are sent at login.
+    pub fn announce(&self) -> Vec<ServerRequest> {
+        let likes = self.likes.iter().cloned().map(ServerRequest::AddThingILike);
+        let dislikes = self
+            .dislikes
+            .iter()
+            .cloned()
+            .map(ServerRequest::AddThingIHate);
+        likes.chain(dislikes).collect()
     }
 
-    pub fn set_interest(&mut self, client: Option<&Client>, item: String, like: bool, add: bool) {
+    pub fn set_interest(&mut self, item: String, like: bool, add: bool) -> Vec<ServerRequest> {
         let list = if like {
             &mut self.likes
         } else {
@@ -58,64 +58,111 @@ impl Discover {
         if add {
             list.push(item.clone());
         }
-        if let Some(client) = client {
-            let _ = match (like, add) {
-                (true, true) => client.add_interest(&item),
-                (true, false) => client.remove_interest(&item),
-                (false, true) => client.add_dislike(&item),
-                (false, false) => client.remove_dislike(&item),
-            };
-            self.refresh(client);
-        }
-    }
-
-    pub fn refresh(&mut self, client: &Client) {
-        let _ = client.request_recommendations();
-        let _ = client.request_global_recommendations();
-        let _ = client.request_similar_users();
-        self.watch();
-    }
-
-    pub fn open_item(&mut self, client: &Client, item: String) {
-        let _ = client.request_item_recommendations(&item);
-        let _ = client.request_item_similar_users(&item);
-        self.item = Some(item);
-        self.watch();
-    }
-
-    fn watch(&mut self) {
-        self.until = Some(Instant::now() + WINDOW);
-        self.checked = None;
-    }
-
-    pub fn poll(&mut self, client: &Client) -> Option<Discovery> {
-        let until = self.until?;
-        if Instant::now() >= until {
-            self.until = None;
-        }
-        if self.checked.is_some_and(|at| at.elapsed() < REFRESH) {
-            return None;
-        }
-        self.checked = Some(Instant::now());
-        let (recommended, unrecommended) = client.recommendations().unwrap_or_default();
-        let next = Discovery {
-            recommended,
-            unrecommended,
-            global: client
-                .global_recommendations()
-                .map(|(recommended, _)| recommended)
-                .unwrap_or_default(),
-            similar: client.similar_users(),
-            item: self.item.as_ref().map(|item| ItemDetails {
-                item: item.clone(),
-                recommendations: client.item_recommendations(item),
-                users: client.item_similar_users(item),
-            }),
+        let change = match (like, add) {
+            (true, true) => ServerRequest::AddThingILike(item),
+            (true, false) => ServerRequest::RemoveThingILike(item),
+            (false, true) => ServerRequest::AddThingIHate(item),
+            (false, false) => ServerRequest::RemoveThingIHate(item),
         };
-        if next == self.sent {
-            return None;
+        let mut requests = vec![change];
+        requests.extend(self.refresh());
+        requests
+    }
+
+    pub fn refresh(&self) -> Vec<ServerRequest> {
+        vec![
+            ServerRequest::Recommendations,
+            ServerRequest::GlobalRecommendations,
+            ServerRequest::SimilarUsers,
+        ]
+    }
+
+    pub fn open_item(&mut self, item: String) -> Vec<ServerRequest> {
+        self.discovery.item = Some(ItemDetails {
+            item: item.clone(),
+            ..Default::default()
+        });
+        vec![
+            ServerRequest::ItemRecommendations(item.clone()),
+            ServerRequest::ItemSimilarUsers(item),
+        ]
+    }
+
+    /// Folds a server reply in, returning the new state when it changed.
+    pub fn apply(&mut self, message: &ServerResponse) -> Option<Discovery> {
+        let before = self.discovery.clone();
+        match message {
+            ServerResponse::Recommendations { likes, dislikes } => {
+                self.discovery.recommended = likes.clone();
+                self.discovery.unrecommended = dislikes.clone();
+            }
+            ServerResponse::GlobalRecommendations { likes, .. } => {
+                self.discovery.global = likes.clone();
+            }
+            ServerResponse::SimilarUsers(users) => {
+                self.discovery.similar = users
+                    .iter()
+                    .map(|(username, rating)| SimilarUser {
+                        username: username.clone(),
+                        weight: *rating,
+                    })
+                    .collect();
+            }
+            ServerResponse::ItemRecommendations {
+                item,
+                recommendations,
+            } => {
+                if let Some(details) = self.discovery.item.as_mut().filter(|d| d.item == *item) {
+                    details.recommendations = recommendations.clone();
+                }
+            }
+            ServerResponse::ItemSimilarUsers { item, usernames } => {
+                if let Some(details) = self.discovery.item.as_mut().filter(|d| d.item == *item) {
+                    details.users = usernames.clone();
+                }
+            }
+            _ => return None,
         }
-        self.sent = next.clone();
-        Some(next)
+        (self.discovery != before).then(|| self.discovery.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folds_in_replies_for_the_open_item_only() {
+        let mut discover = Discover::default();
+        discover.open_item("ambient".into());
+        let recs = vec![Recommendation {
+            item: "drone".into(),
+            score: 5,
+        }];
+        let next = discover.apply(&ServerResponse::ItemRecommendations {
+            item: "ambient".into(),
+            recommendations: recs.clone(),
+        });
+        assert_eq!(next.unwrap().item.unwrap().recommendations, recs);
+        assert!(
+            discover
+                .apply(&ServerResponse::ItemRecommendations {
+                    item: "jazz".into(),
+                    recommendations: recs,
+                })
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn sends_interest_changes_with_a_refresh() {
+        let mut discover = Discover::default();
+        let requests = discover.set_interest("idm".into(), true, true);
+        assert_eq!(requests[0], ServerRequest::AddThingILike("idm".into()));
+        assert_eq!(requests.len(), 4);
+        assert_eq!(
+            discover.announce(),
+            vec![ServerRequest::AddThingILike("idm".into())]
+        );
     }
 }

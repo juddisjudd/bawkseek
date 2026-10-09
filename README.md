@@ -65,7 +65,7 @@ $env:LOG_LEVEL = "DEBUG"; $env:LOG_FILE = "$env:TEMP\bawkseek.log"; cargo run
 
 ## Credits
 
-- [soulseek-rs-lib](https://github.com/michel/soulseek-rs) (MIT) speaks the Soulseek protocol.
+- [slsk](crates/slsk), bawkseek's own Soulseek protocol crate, built from the Nicotine+ protocol notes and [soulseek-rs](https://github.com/michel/soulseek-rs) (MIT).
 - [GPUI Kit](https://github.com/longbridge/gpui-kit) (Apache-2.0) and Zed's GPUI draw the interface.
 - [IBM Plex Mono](https://github.com/IBM/plex) (SIL Open Font License, `assets/fonts/OFL.txt`) is the typeface.
 - [Lucide](https://lucide.dev) (ISC) icons.

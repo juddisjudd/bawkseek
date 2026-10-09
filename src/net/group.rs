@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use soulseek_rs::SearchResult;
+use slsk::proto::peer::SearchReply;
 
 use crate::format;
 
@@ -79,7 +79,7 @@ pub struct SearchHits {
     pub users: usize,
 }
 
-pub fn group(results: &[SearchResult]) -> SearchHits {
+pub fn group(results: &[SearchReply]) -> SearchHits {
     let mut index: HashMap<(&str, &str), usize> = HashMap::new();
     let mut folders: Vec<FolderHit> = Vec::new();
     let mut users = HashSet::new();
@@ -99,14 +99,14 @@ pub fn group(results: &[SearchResult]) -> SearchHits {
                     name: format::split_path(folder).1.to_string(),
                     files: Vec::new(),
                     size: 0,
-                    speed: result.speed,
-                    free: result.slots > 0,
+                    speed: result.avg_speed,
+                    free: result.slot_free,
                     format: String::new(),
                     quality: String::new(),
                 });
                 folders.len() - 1
             });
-            let attr = |code| file.attribs.get(&code).copied().filter(|v| *v > 0);
+            let attr = |code| file.attr(code).filter(|v| *v > 0);
             let hit = FileHit {
                 filename: file.name.clone(),
                 name: name.to_string(),
@@ -204,28 +204,28 @@ fn uniform(mut values: impl Iterator<Item = Option<u32>>) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
-    use soulseek_rs::File;
+    use slsk::proto::types::FileEntry;
 
     use super::*;
 
-    fn file(user: &str, name: &str, size: u64, attribs: &[(u32, u32)]) -> File {
-        File {
-            username: user.into(),
+    fn file(_user: &str, name: &str, size: u64, attribs: &[(u32, u32)]) -> FileEntry {
+        FileEntry {
             name: name.into(),
             size,
-            attribs: attribs.iter().copied().collect::<HashMap<_, _>>(),
+            ext: String::new(),
+            attrs: attribs.to_vec(),
         }
     }
 
-    fn result(user: &str, speed: u32, slots: u8, files: Vec<File>) -> SearchResult {
-        SearchResult {
+    fn result(user: &str, speed: u32, slots: u8, files: Vec<FileEntry>) -> SearchReply {
+        SearchReply {
+            username: user.into(),
             token: 1,
             files,
-            slots,
-            speed,
-            username: user.into(),
+            slot_free: slots > 0,
+            avg_speed: speed,
+            queue_len: 0,
+            private_files: Vec::new(),
         }
     }
 

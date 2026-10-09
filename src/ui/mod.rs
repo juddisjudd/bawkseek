@@ -396,6 +396,7 @@ impl Workspace {
         });
         let (likes, dislikes) = (self.config.likes.clone(), self.config.dislikes.clone());
         self.session.update(cx, |session, cx| {
+            session.send(Command::SetIgnored(ignored.iter().cloned().collect()));
             session.ignored = ignored;
             session.likes = likes;
             session.dislikes = dislikes;

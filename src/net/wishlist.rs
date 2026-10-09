@@ -1,21 +1,17 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
-
-use soulseek_rs::{Client, SearchResult};
 
 const FIRST_RUN: Duration = Duration::from_secs(20);
 const BASELINE: Duration = Duration::from_secs(60);
+const DEFAULT_INTERVAL: Duration = Duration::from_secs(12 * 60);
 
-type Key = (String, String);
-
-/// Saved searches the server reruns on its schedule; each run wipes the library's results, so they are merged here.
+/// Saved searches the server lets us run again on its schedule; every run adds to the same tab.
 #[derive(Default)]
 pub struct Wishlist {
     wishes: Vec<String>,
-    kept: HashMap<String, Vec<SearchResult>>,
-    seen: HashMap<String, HashSet<Key>>,
     quiet_until: HashMap<String, Instant>,
     next_run: Option<Instant>,
+    interval: Option<Duration>,
 }
 
 impl Wishlist {
@@ -24,13 +20,9 @@ impl Wishlist {
         self.next_run = Some(Instant::now() + FIRST_RUN);
     }
 
-    pub fn add(&mut self, client: Option<&Client>, query: String) {
+    pub fn add(&mut self, query: String) {
         if self.wishes.contains(&query) {
             return;
-        }
-        if let Some(client) = client {
-            let current = client.get_search_results(&query);
-            self.seen.insert(query.clone(), keys(&current));
         }
         self.quiet_until
             .insert(query.clone(), Instant::now() + BASELINE);
@@ -42,8 +34,6 @@ impl Wishlist {
 
     pub fn remove(&mut self, query: &str) {
         self.wishes.retain(|wish| wish != query);
-        self.kept.remove(query);
-        self.seen.remove(query);
         self.quiet_until.remove(query);
     }
 
@@ -51,141 +41,60 @@ impl Wishlist {
         self.wishes.iter().any(|wish| wish == query)
     }
 
-    pub fn wishes(&self) -> &[String] {
-        &self.wishes
+    pub fn set_interval(&mut self, seconds: u32) {
+        self.interval = Some(Duration::from_secs(u64::from(seconds.max(60))));
     }
 
-    /// Re-runs every wish once the server's interval has passed; returns true when it did.
-    pub fn run_due(&mut self, client: &Client) -> bool {
+    /// The wishes to search again, once the server's interval has passed.
+    pub fn due(&mut self) -> Vec<String> {
         if self.wishes.is_empty() || self.next_run.is_none_or(|at| Instant::now() < at) {
-            return false;
+            return Vec::new();
         }
-        for wish in &self.wishes {
-            let current = client.get_search_results(wish);
-            let kept = self.kept.remove(wish).unwrap_or_default();
-            self.kept.insert(wish.clone(), merge(kept, current));
-            let _ = client.start_wishlist_search(wish);
-        }
-        self.next_run = Some(Instant::now() + client.wishlist_interval());
-        true
+        self.next_run = Some(Instant::now() + self.interval.unwrap_or(DEFAULT_INTERVAL));
+        self.wishes.clone()
     }
 
-    /// Earlier runs' results plus the current run's, without repeating a user's file.
-    pub fn view(&self, query: &str, current: Vec<SearchResult>) -> Vec<SearchResult> {
-        let kept = self.kept.get(query).cloned().unwrap_or_default();
-        merge(kept, current)
+    pub fn fresh(&mut self, query: &str, added: usize) -> usize {
+        self.fresh_at(query, added, Instant::now())
     }
 
-    pub fn fresh(&mut self, query: &str, results: &[SearchResult]) -> usize {
-        self.fresh_at(query, results, Instant::now())
-    }
-
-    /// New results since the last call; results trickle in for a while, so the first minute only builds a baseline.
-    fn fresh_at(&mut self, query: &str, results: &[SearchResult], now: Instant) -> usize {
-        if results.is_empty() && !self.quiet_until.contains_key(query) {
+    /// How many of `added` new files to announce; results trickle in for a while, so the first minute only builds a baseline.
+    fn fresh_at(&mut self, query: &str, added: usize, now: Instant) -> usize {
+        if added == 0 && !self.quiet_until.contains_key(query) {
             return 0;
         }
         let quiet_until = *self
             .quiet_until
             .entry(query.to_string())
             .or_insert(now + BASELINE);
-        let seen = self.seen.entry(query.to_string()).or_default();
-        let mut fresh = 0;
-        for key in keys(results) {
-            if seen.insert(key) {
-                fresh += 1;
-            }
-        }
-        if now < quiet_until { 0 } else { fresh }
+        if now < quiet_until { 0 } else { added }
     }
-}
-
-fn keys(results: &[SearchResult]) -> HashSet<Key> {
-    results
-        .iter()
-        .flat_map(|result| {
-            result
-                .files
-                .iter()
-                .map(|file| (result.username.clone(), file.name.clone()))
-        })
-        .collect()
-}
-
-fn merge(mut kept: Vec<SearchResult>, current: Vec<SearchResult>) -> Vec<SearchResult> {
-    let mut known = keys(&kept);
-    for mut result in current {
-        result
-            .files
-            .retain(|file| known.insert((result.username.clone(), file.name.clone())));
-        if !result.files.is_empty() {
-            kept.push(result);
-        }
-    }
-    kept
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
-    use soulseek_rs::File;
-
     use super::*;
 
-    fn result(user: &str, files: &[&str]) -> SearchResult {
-        SearchResult {
-            token: 1,
-            files: files
-                .iter()
-                .map(|name| File {
-                    username: user.into(),
-                    name: (*name).into(),
-                    size: 1,
-                    attribs: HashMap::new(),
-                })
-                .collect(),
-            slots: 1,
-            speed: 1,
-            username: user.into(),
-        }
-    }
-
     #[test]
-    fn merges_runs_without_repeating_files() {
-        let first = vec![result("ann", &["a\\1.mp3", "a\\2.mp3"])];
-        let second = vec![
-            result("ann", &["a\\2.mp3", "a\\3.mp3"]),
-            result("bob", &["b\\1.mp3"]),
-        ];
-        let merged = merge(first, second);
-        let files: usize = merged.iter().map(|result| result.files.len()).sum();
-        assert_eq!(files, 4);
-        assert_eq!(merged.len(), 3);
-        assert_eq!(merged[1].files[0].name, "a\\3.mp3");
-    }
-
-    #[test]
-    fn counts_only_new_results() {
+    fn counts_only_new_results_after_the_baseline() {
         let mut wishlist = Wishlist::default();
         let start = Instant::now();
         let later = |secs| start + Duration::from_secs(secs);
-        assert_eq!(wishlist.fresh_at("q", &[], start), 0);
-        assert_eq!(
-            wishlist.fresh_at("q", &[result("ann", &["1"])], later(10)),
-            0
-        );
-        assert_eq!(
-            wishlist.fresh_at("q", &[result("ann", &["1", "2"])], later(40)),
-            0
-        );
-        assert_eq!(
-            wishlist.fresh_at("q", &[result("ann", &["2", "3"])], later(75)),
-            1
-        );
-        assert_eq!(
-            wishlist.fresh_at("q", &[result("bob", &["2"])], later(80)),
-            1
-        );
+        assert_eq!(wishlist.fresh_at("q", 0, start), 0);
+        assert_eq!(wishlist.fresh_at("q", 1, later(10)), 0);
+        assert_eq!(wishlist.fresh_at("q", 1, later(40)), 0);
+        assert_eq!(wishlist.fresh_at("q", 1, later(75)), 1);
+        assert_eq!(wishlist.fresh_at("q", 2, later(80)), 2);
+    }
+
+    #[test]
+    fn reruns_on_the_servers_interval() {
+        let mut wishlist = Wishlist::default();
+        assert!(wishlist.due().is_empty());
+        wishlist.set(vec!["a".into()]);
+        wishlist.next_run = Some(Instant::now());
+        wishlist.set_interval(120);
+        assert_eq!(wishlist.due(), vec!["a".to_string()]);
+        assert!(wishlist.due().is_empty());
     }
 }

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use soulseek_rs::SharedDirectory;
+use slsk::proto::types::Directory;
 
 use super::group::FileHit;
 use crate::format;
@@ -33,7 +33,7 @@ pub struct Listing {
 }
 
 impl Listing {
-    pub fn build(dirs: Vec<SharedDirectory>) -> Self {
+    pub fn build(dirs: Vec<Directory>) -> Self {
         let mut listing = Listing::default();
         let mut index: HashMap<String, usize> = HashMap::new();
 
@@ -43,7 +43,7 @@ impl Listing {
                 .files
                 .into_iter()
                 .map(|entry| {
-                    let attr = |code| entry.attribute(code).filter(|value| *value > 0);
+                    let attr = |code| entry.attr(code).filter(|value| *value > 0);
                     FileHit {
                         filename: format!("{}\\{}", dir.name, entry.name),
                         ext: format::extension(&entry.name),
@@ -148,19 +148,20 @@ impl Listing {
 
 #[cfg(test)]
 mod tests {
-    use soulseek_rs::SharedFileEntry;
+    use slsk::proto::types::FileEntry;
 
     use super::*;
 
-    fn dir(name: &str, files: &[(&str, u64)]) -> SharedDirectory {
-        SharedDirectory {
+    fn dir(name: &str, files: &[(&str, u64)]) -> Directory {
+        Directory {
             name: name.into(),
             files: files
                 .iter()
-                .map(|(name, size)| SharedFileEntry {
+                .map(|(name, size)| FileEntry {
                     name: (*name).into(),
                     size: *size,
-                    attributes: vec![(0, 320), (1, 200)],
+                    ext: String::new(),
+                    attrs: vec![(0, 320), (1, 200)],
                 })
                 .collect(),
         }

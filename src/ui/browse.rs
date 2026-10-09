@@ -819,18 +819,19 @@ impl Render for BrowseView {
 mod tests {
     use std::collections::HashSet;
 
-    use soulseek_rs::{SharedDirectory, SharedFileEntry};
+    use slsk::proto::types::{Directory, FileEntry};
 
     use super::{filtered_rows, visible_rows};
     use crate::net::Listing;
 
     fn listing() -> Listing {
-        let dir = |name: &str| SharedDirectory {
+        let dir = |name: &str| Directory {
             name: name.into(),
-            files: vec![SharedFileEntry {
+            files: vec![FileEntry {
                 name: "a.mp3".into(),
                 size: 1,
-                attributes: Vec::new(),
+                ext: String::new(),
+                attrs: Vec::new(),
             }],
         };
         Listing::build(vec![

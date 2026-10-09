@@ -24,7 +24,7 @@ pub use discover::Discovery;
 pub use filter::{Filter, Quality, toggle_format};
 pub use group::{FileHit, FolderHit, SearchHits};
 pub use portmap::PortMap;
-pub use rooms::{RoomLine, Rooms};
+pub use rooms::{RoomEvent, RoomLine, Rooms};
 pub use scope::{Scope, parse_scope};
 pub use sharing::{overlaps, virtual_roots};
 pub use social::{Presence, UserCard};
@@ -57,8 +57,6 @@ pub struct Wanted {
     pub username: String,
     pub filename: String,
     pub size: u64,
-    pub bitrate: Option<u32>,
-    pub duration: Option<u32>,
 }
 
 impl Wanted {
@@ -67,8 +65,6 @@ impl Wanted {
             username: username.to_string(),
             filename: file.filename.clone(),
             size: file.size,
-            bitrate: file.bitrate,
-            duration: file.duration,
         }
     }
 }
@@ -195,10 +191,7 @@ pub enum Command {
     SetShares(Vec<PathBuf>),
     Rescan,
     SetUploadSlots(usize),
-    CancelUpload {
-        username: String,
-        filename: String,
-    },
+    CancelUpload(u64),
     ClearUploads,
     Browse(String),
     SendMessage {
@@ -239,6 +232,7 @@ pub enum Command {
         root: String,
         files: Vec<(Wanted, String)>,
     },
+    SetIgnored(Vec<String>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -270,7 +264,7 @@ pub enum Event {
     },
     Rooms {
         at: i64,
-        events: Vec<soulseek_rs::RoomEvent>,
+        events: Vec<RoomEvent>,
     },
     Buddies(Vec<UserCard>),
     PortMap(PortMap),
@@ -451,8 +445,8 @@ impl Session {
             }
             Event::Rooms { at, events } => {
                 for event in events {
-                    if let soulseek_rs::RoomEvent::Message { username, .. }
-                    | soulseek_rs::RoomEvent::GlobalMessage { username, .. } = &event
+                    if let RoomEvent::Message { username, .. }
+                    | RoomEvent::GlobalMessage { username, .. } = &event
                         && self.ignored.contains(username)
                     {
                         continue;

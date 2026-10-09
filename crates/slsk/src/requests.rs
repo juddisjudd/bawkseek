@@ -178,7 +178,7 @@ impl Engine {
         UserInfo {
             description: self.profile.description.clone(),
             picture: self.profile.picture.clone(),
-            total_uploads: self.profile.total_uploads,
+            upload_slots: self.uploads.slots as u32,
             queue_size: self.queued_uploads() as u32,
             slots_free: self.free_upload_slots() > 0,
             upload_permitted: Some(1),

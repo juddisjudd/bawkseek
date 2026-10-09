@@ -86,7 +86,7 @@ pub struct SearchReply {
 pub struct UserInfo {
     pub description: String,
     pub picture: Option<Vec<u8>>,
-    pub total_uploads: u32,
+    pub upload_slots: u32,
     pub queue_size: u32,
     pub slots_free: bool,
     pub upload_permitted: Option<u32>,
@@ -199,7 +199,7 @@ impl PeerMessage {
                         w.bool(false);
                     }
                 }
-                w.u32(info.total_uploads)
+                w.u32(info.upload_slots)
                     .u32(info.queue_size)
                     .bool(info.slots_free);
                 if let Some(permitted) = info.upload_permitted {
@@ -316,14 +316,14 @@ impl PeerMessage {
                 } else {
                     None
                 };
-                let total_uploads = r.u32()?;
+                let upload_slots = r.u32()?;
                 let queue_size = r.u32()?;
                 let slots_free = r.bool()?;
                 let upload_permitted = r.u32().ok();
                 UserInfoResponse(UserInfo {
                     description,
                     picture,
-                    total_uploads,
+                    upload_slots,
                     queue_size,
                     slots_free,
                     upload_permitted,
@@ -456,7 +456,7 @@ mod tests {
         roundtrip(PeerMessage::UserInfoResponse(UserInfo {
             description: "hi".into(),
             picture: Some(vec![1, 2, 3]),
-            total_uploads: 4,
+            upload_slots: 4,
             queue_size: 5,
             slots_free: true,
             upload_permitted: Some(1),

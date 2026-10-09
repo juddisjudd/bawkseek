@@ -277,19 +277,19 @@ impl UsersView {
             .map(|stats| {
                 format!(
                     "{} in {}",
-                    format::plural(stats.shared_files as usize, "file", "files"),
-                    format::plural(stats.shared_folders as usize, "folder", "folders")
+                    format::plural(stats.files as usize, "file", "files"),
+                    format::plural(stats.dirs as usize, "folder", "folders")
                 )
             })
             .unwrap_or_else(unknown);
         let speed = card
             .stats
-            .map(|stats| format::speed(u64::from(stats.average_speed)))
+            .map(|stats| format::speed(u64::from(stats.avg_speed)))
             .unwrap_or_else(unknown);
         let peer = card.peer.clone();
         let slots = peer
             .as_ref()
-            .map(|peer| peer.total_uploads.to_string())
+            .map(|peer| peer.upload_slots.to_string())
             .unwrap_or_else(unknown);
         let queue = peer
             .as_ref()
@@ -403,7 +403,7 @@ impl UsersView {
                 div()
                     .text_size(px(12.))
                     .text_color(p.text_weaker)
-                    .child("ignoring hides someone's messages and room lines. soulseek gives bawkseek no way to refuse their downloads."),
+                    .child("ignoring hides someone's messages and room lines, and refuses their downloads, browsing and searches."),
             )
     }
 }

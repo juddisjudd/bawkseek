@@ -1,8 +1,167 @@
 use std::collections::HashSet;
 
-use soulseek_rs::{RoomEvent, RoomInfo, RoomTicker};
+use slsk::proto::server::ServerResponse;
 
 const MAX_LINES: usize = 500;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RoomInfo {
+    pub name: String,
+    pub user_count: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RoomTicker {
+    pub username: String,
+    pub ticker: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum RoomEvent {
+    List(Vec<RoomInfo>),
+    Joined {
+        room: String,
+        users: Vec<String>,
+    },
+    Left {
+        room: String,
+    },
+    Message {
+        room: String,
+        username: String,
+        message: String,
+    },
+    UserJoined {
+        room: String,
+        username: String,
+    },
+    UserLeft {
+        room: String,
+        username: String,
+    },
+    Tickers {
+        room: String,
+        tickers: Vec<RoomTicker>,
+    },
+    TickerAdded {
+        room: String,
+        username: String,
+        ticker: String,
+    },
+    TickerRemoved {
+        room: String,
+        username: String,
+    },
+    PrivateMembers {
+        room: String,
+        users: Vec<String>,
+    },
+    GlobalMessage {
+        room: String,
+        username: String,
+        message: String,
+    },
+    CantCreate {
+        room: String,
+    },
+}
+
+impl RoomEvent {
+    /// The room events in one server message; most messages hold none.
+    pub fn from_server(message: &ServerResponse) -> Vec<RoomEvent> {
+        let event = match message {
+            ServerResponse::RoomList(list) => RoomEvent::List(
+                list.public
+                    .iter()
+                    .chain(&list.owned)
+                    .chain(&list.private)
+                    .map(|(name, user_count)| RoomInfo {
+                        name: name.clone(),
+                        user_count: *user_count,
+                    })
+                    .collect(),
+            ),
+            ServerResponse::JoinRoom(joined) => {
+                let users: Vec<String> = joined
+                    .users
+                    .iter()
+                    .map(|user| user.username.clone())
+                    .collect();
+                let join = RoomEvent::Joined {
+                    room: joined.room.clone(),
+                    users: users.clone(),
+                };
+                if joined.owner.is_some() {
+                    return vec![
+                        RoomEvent::PrivateMembers {
+                            room: joined.room.clone(),
+                            users,
+                        },
+                        join,
+                    ];
+                }
+                join
+            }
+            ServerResponse::LeaveRoom(room) => RoomEvent::Left { room: room.clone() },
+            ServerResponse::SayChatroom {
+                room,
+                username,
+                message,
+            } => RoomEvent::Message {
+                room: room.clone(),
+                username: username.clone(),
+                message: message.clone(),
+            },
+            ServerResponse::UserJoinedRoom { room, user } => RoomEvent::UserJoined {
+                room: room.clone(),
+                username: user.username.clone(),
+            },
+            ServerResponse::UserLeftRoom { room, username } => RoomEvent::UserLeft {
+                room: room.clone(),
+                username: username.clone(),
+            },
+            ServerResponse::RoomTickers { room, tickers } => RoomEvent::Tickers {
+                room: room.clone(),
+                tickers: tickers
+                    .iter()
+                    .map(|(username, ticker)| RoomTicker {
+                        username: username.clone(),
+                        ticker: ticker.clone(),
+                    })
+                    .collect(),
+            },
+            ServerResponse::RoomTickerAdded {
+                room,
+                username,
+                ticker,
+            } => RoomEvent::TickerAdded {
+                room: room.clone(),
+                username: username.clone(),
+                ticker: ticker.clone(),
+            },
+            ServerResponse::RoomTickerRemoved { room, username } => RoomEvent::TickerRemoved {
+                room: room.clone(),
+                username: username.clone(),
+            },
+            ServerResponse::RoomMembers { room, members } => RoomEvent::PrivateMembers {
+                room: room.clone(),
+                users: members.clone(),
+            },
+            ServerResponse::GlobalRoomMessage {
+                room,
+                username,
+                message,
+            } => RoomEvent::GlobalMessage {
+                room: room.clone(),
+                username: username.clone(),
+                message: message.clone(),
+            },
+            ServerResponse::CantCreateRoom(room) => RoomEvent::CantCreate { room: room.clone() },
+            _ => return Vec::new(),
+        };
+        vec![event]
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RoomLine {
@@ -162,7 +321,6 @@ impl Rooms {
                     "{room} is taken, or it is a public room. pick another name."
                 ));
             }
-            _ => {}
         }
         None
     }

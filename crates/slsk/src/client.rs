@@ -136,7 +136,6 @@ pub enum SearchScope {
 pub struct Profile {
     pub description: String,
     pub picture: Option<Vec<u8>>,
-    pub total_uploads: u32,
 }
 
 pub(crate) enum Command {

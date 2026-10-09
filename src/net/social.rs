@@ -1,9 +1,9 @@
 use std::time::{Duration, Instant};
 
-use soulseek_rs::message::peer::PeerInfo;
-use soulseek_rs::{Client, UserInfo, UserStats, UserStatus};
+use slsk::proto::peer::UserInfo;
+use slsk::proto::server::{ServerRequest, ServerResponse};
+use slsk::proto::types::{UserStats, UserStatus};
 
-const BUDDY_REFRESH: Duration = Duration::from_secs(2);
 const LOOKUP_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -15,147 +15,250 @@ pub enum Presence {
     Online,
 }
 
+impl From<UserStatus> for Presence {
+    fn from(status: UserStatus) -> Self {
+        match status {
+            UserStatus::Offline => Presence::Offline,
+            UserStatus::Away => Presence::Away,
+            UserStatus::Online => Presence::Online,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct UserCard {
     pub username: String,
     pub presence: Presence,
     pub privileged: bool,
     pub stats: Option<UserStats>,
-    pub peer: Option<PeerInfo>,
+    pub peer: Option<UserInfo>,
     pub loading: bool,
 }
 
-fn card(username: &str, info: Option<UserInfo>, peer: Option<PeerInfo>, loading: bool) -> UserCard {
-    let presence = info.as_ref().and_then(|info| info.presence);
-    UserCard {
-        username: username.to_string(),
-        presence: match presence.map(|presence| presence.status) {
-            None => Presence::Unknown,
-            Some(UserStatus::Offline) => Presence::Offline,
-            Some(UserStatus::Away) => Presence::Away,
-            Some(UserStatus::Online) => Presence::Online,
-        },
-        privileged: presence.is_some_and(|presence| presence.privileged),
-        stats: info.and_then(|info| info.stats),
-        peer,
-        loading,
+impl UserCard {
+    /// Takes in a status or stats reply about this user; returns true when something changed.
+    fn absorb(&mut self, message: &ServerResponse) -> bool {
+        let before = self.clone();
+        match message {
+            ServerResponse::WatchUser {
+                username,
+                exists,
+                status,
+                stats,
+                ..
+            } if *username == self.username => {
+                self.presence = if *exists {
+                    (*status).into()
+                } else {
+                    Presence::Offline
+                };
+                if *exists {
+                    self.stats = Some(*stats);
+                }
+            }
+            ServerResponse::GetUserStatus {
+                username,
+                status,
+                privileged,
+            } if *username == self.username => {
+                self.presence = (*status).into();
+                self.privileged = *privileged;
+            }
+            ServerResponse::GetUserStats { username, stats } if *username == self.username => {
+                self.stats = Some(*stats);
+            }
+            _ => return false,
+        }
+        *self != before
     }
 }
 
-/// Watched users; the server pushes their status changes, which only show up by polling.
+/// Watched users, whose status changes the server pushes to us.
 #[derive(Default)]
 pub struct Buddies {
-    names: Vec<String>,
-    sent: Vec<UserCard>,
-    checked: Option<Instant>,
+    cards: Vec<UserCard>,
 }
 
 impl Buddies {
     pub fn set(&mut self, names: Vec<String>) {
-        self.names = names;
-        self.checked = None;
-    }
-
-    pub fn add(&mut self, client: Option<&Client>, name: String) {
-        if self.names.contains(&name) {
-            return;
-        }
-        if let Some(client) = client {
-            let _ = client.watch_user(&name);
-            let _ = client.request_user_info(&name);
-        }
-        self.names.push(name);
-        self.checked = None;
-    }
-
-    pub fn remove(&mut self, client: Option<&Client>, name: &str) {
-        self.names.retain(|existing| existing != name);
-        if let Some(client) = client {
-            let _ = client.unwatch_user(name);
-        }
-        self.checked = None;
-    }
-
-    /// The library drops watches on re-login, so this runs after every login.
-    pub fn watch_all(&self, client: &Client) {
-        for name in &self.names {
-            let _ = client.watch_user(name);
-            let _ = client.request_user_info(name);
-        }
-    }
-
-    pub fn poll(&mut self, client: &Client) -> Option<Vec<UserCard>> {
-        if self.checked.is_some_and(|at| at.elapsed() < BUDDY_REFRESH) {
-            return None;
-        }
-        self.checked = Some(Instant::now());
-        let cards: Vec<UserCard> = self
-            .names
-            .iter()
-            .map(|name| card(name, client.user_info(name), None, false))
+        self.cards = names
+            .into_iter()
+            .map(|username| UserCard {
+                username,
+                ..Default::default()
+            })
             .collect();
-        if cards == self.sent {
-            return None;
+    }
+
+    pub fn cards(&self) -> Vec<UserCard> {
+        self.cards.clone()
+    }
+
+    pub fn add(&mut self, name: String) -> Vec<ServerRequest> {
+        if self.cards.iter().any(|card| card.username == name) {
+            return Vec::new();
         }
-        self.sent = cards.clone();
-        Some(cards)
+        self.cards.push(UserCard {
+            username: name.clone(),
+            ..Default::default()
+        });
+        watch(name)
+    }
+
+    pub fn remove(&mut self, name: &str) -> Vec<ServerRequest> {
+        self.cards.retain(|card| card.username != name);
+        vec![ServerRequest::UnwatchUser(name.to_string())]
+    }
+
+    pub fn watch_all(&self) -> Vec<ServerRequest> {
+        self.cards
+            .iter()
+            .flat_map(|card| watch(card.username.clone()))
+            .collect()
+    }
+
+    /// Returns the buddy list when a reply changed it.
+    pub fn apply(&mut self, message: &ServerResponse) -> Option<Vec<UserCard>> {
+        let mut changed = false;
+        for card in &mut self.cards {
+            changed |= card.absorb(message);
+        }
+        changed.then(|| self.cards.clone())
     }
 }
 
-/// One user's status, stats and self-description, gathered from two separate replies.
+fn watch(name: String) -> Vec<ServerRequest> {
+    vec![
+        ServerRequest::WatchUser(name.clone()),
+        ServerRequest::GetUserStatus(name),
+    ]
+}
+
+/// One user's status, stats and self-description, gathered from three separate replies.
 #[derive(Default)]
 pub struct Lookup {
-    user: Option<(String, Instant)>,
-    sent: Option<UserCard>,
+    card: Option<UserCard>,
+    deadline: Option<Instant>,
+    has_status: bool,
+    has_stats: bool,
 }
 
 impl Lookup {
-    pub fn start(&mut self, client: &Client, username: String) {
-        let _ = client.request_user_info(&username);
-        let _ = client.request_peer_info(&username);
-        self.sent = None;
-        self.user = Some((username, Instant::now() + LOOKUP_TIMEOUT));
+    pub fn start(&mut self, username: String) -> Vec<ServerRequest> {
+        self.card = Some(UserCard {
+            username: username.clone(),
+            loading: true,
+            ..Default::default()
+        });
+        self.deadline = Some(Instant::now() + LOOKUP_TIMEOUT);
+        self.has_status = false;
+        self.has_stats = false;
+        vec![
+            ServerRequest::GetUserStatus(username.clone()),
+            ServerRequest::GetUserStats(username),
+        ]
     }
 
-    pub fn poll(&mut self, client: &Client) -> Option<UserCard> {
-        let (username, deadline) = self.user.as_ref()?;
-        let info = client.user_info(username);
-        let peer = client.peer_info(username);
-        let complete = info.as_ref().is_some_and(UserInfo::is_complete) && peer.is_some();
-        let offline = info
-            .as_ref()
-            .and_then(|info| info.presence)
-            .is_some_and(|presence| presence.status == UserStatus::Offline);
-        let done = complete || offline || Instant::now() >= *deadline;
-        let result = card(username, info, peer, !done);
-        if done {
-            self.user = None;
-        }
-        if self.sent.as_ref() == Some(&result) {
+    pub fn apply(&mut self, message: &ServerResponse) -> Option<UserCard> {
+        let card = self.card.as_mut()?;
+        if !card.absorb(message) {
             return None;
         }
-        self.sent = Some(result.clone());
-        Some(result)
+        match message {
+            ServerResponse::GetUserStatus { .. } => self.has_status = true,
+            ServerResponse::GetUserStats { .. } => self.has_stats = true,
+            _ => {}
+        }
+        self.finish_if_done()
+    }
+
+    pub fn apply_info(&mut self, username: &str, info: UserInfo) -> Option<UserCard> {
+        let card = self
+            .card
+            .as_mut()
+            .filter(|card| card.username == username)?;
+        card.peer = Some(info);
+        self.finish_if_done()
+    }
+
+    /// The peer could not be reached for its description; what the server said is all there is.
+    pub fn info_failed(&mut self, username: &str) -> Option<UserCard> {
+        self.card
+            .as_ref()
+            .filter(|card| card.username == username)?;
+        self.finish()
+    }
+
+    pub fn tick(&mut self) -> Option<UserCard> {
+        if self.deadline.is_some_and(|at| Instant::now() >= at) {
+            return self.finish();
+        }
+        None
+    }
+
+    fn finish_if_done(&mut self) -> Option<UserCard> {
+        let card = self.card.as_ref()?;
+        let complete = self.has_status && self.has_stats && card.peer.is_some();
+        if complete || (self.has_status && card.presence == Presence::Offline) {
+            return self.finish();
+        }
+        Some(card.clone())
+    }
+
+    fn finish(&mut self) -> Option<UserCard> {
+        self.deadline = None;
+        let mut card = self.card.take()?;
+        card.loading = false;
+        Some(card)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use soulseek_rs::UserPresence;
-
     use super::*;
 
     #[test]
-    fn maps_presence_and_privileges() {
-        let mut info = UserInfo::pending("ann".into());
-        info.presence = Some(UserPresence {
-            status: UserStatus::Away,
-            privileged: true,
+    fn buddies_follow_status_pushes() {
+        let mut buddies = Buddies::default();
+        buddies.set(vec!["ann".into()]);
+        let cards = buddies
+            .apply(&ServerResponse::GetUserStatus {
+                username: "ann".into(),
+                status: UserStatus::Away,
+                privileged: true,
+            })
+            .unwrap();
+        assert_eq!(cards[0].presence, Presence::Away);
+        assert!(cards[0].privileged);
+        assert!(
+            buddies
+                .apply(&ServerResponse::GetUserStatus {
+                    username: "bob".into(),
+                    status: UserStatus::Online,
+                    privileged: false,
+                })
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_lookup_finishes_when_all_replies_are_in() {
+        let mut lookup = Lookup::default();
+        lookup.start("ann".into());
+        let card = lookup
+            .apply(&ServerResponse::GetUserStatus {
+                username: "ann".into(),
+                status: UserStatus::Online,
+                privileged: false,
+            })
+            .unwrap();
+        assert!(card.loading);
+        lookup.apply(&ServerResponse::GetUserStats {
+            username: "ann".into(),
+            stats: UserStats::default(),
         });
-        let result = card("ann", Some(info), None, false);
-        assert_eq!(result.presence, Presence::Away);
-        assert!(result.privileged);
-        assert!(result.stats.is_none());
-        assert_eq!(card("bob", None, None, true).presence, Presence::Unknown);
+        let card = lookup.apply_info("ann", UserInfo::default()).unwrap();
+        assert!(!card.loading);
+        assert!(lookup.tick().is_none());
     }
 }

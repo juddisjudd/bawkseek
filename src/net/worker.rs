@@ -1,36 +1,37 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use soulseek_rs::types::DownloadMetadata;
-use soulseek_rs::utils::logger::{self, LogLevel};
-use soulseek_rs::{Client, ClientSettings, DownloadStatus, RoomEvent, SessionLoss, SoulseekRs};
+use slsk::proto::peer::SearchReply;
+use slsk::proto::server::{ServerRequest, ServerResponse};
+use slsk::proto::types::{Directory, UserStatus};
+use slsk::{
+    Client, Config, Event as Net, Request, SearchScope, Session, TransferState, TransferUpdate,
+};
 
 use super::browse::Listing;
 use super::discover::Discover;
 use super::group::group;
 use super::portmap::{PortMap, PortMapper};
+use super::rooms::RoomEvent;
 use super::scope::{Scope, parse_scope};
-use super::sharing::{Scanner, Uploads};
+use super::sharing::{Uploads, tidy_reason};
 use super::social::{Buddies, Lookup};
 use super::wishlist::Wishlist;
 use super::{
-    Command, DlState, DownloadRow, Event, LoginSettings, NoticeLevel, Status, Wanted, unix_now,
+    Command, DlState, DownloadRow, Event, LoginSettings, NoticeLevel, ShareState, Status, Wanted,
+    unix_now,
 };
 use crate::format;
 
-const TICK: Duration = Duration::from_millis(150);
+const TICK: Duration = Duration::from_millis(50);
 const SEARCH_REFRESH: Duration = Duration::from_millis(700);
 const DOWNLOADS_REFRESH: Duration = Duration::from_millis(250);
-const QUEUE_REFRESH: Duration = Duration::from_secs(3);
-const PING_EVERY: Duration = Duration::from_secs(60);
+const UPLOADS_REFRESH: Duration = Duration::from_millis(500);
 const FOLDER_TIMEOUT: Duration = Duration::from_secs(25);
-const MAX_BACKOFF: Duration = Duration::from_secs(60);
-const BROWSE_TIMEOUT: Duration = Duration::from_secs(90);
-const PRIVILEGES_WAIT: Duration = Duration::from_secs(30);
 
 pub fn spawn() -> (Sender<Command>, Receiver<Event>) {
     let (command_tx, command_rx) = mpsc::channel();
@@ -42,22 +43,40 @@ pub fn spawn() -> (Sender<Command>, Receiver<Event>) {
     (command_tx, event_rx)
 }
 
+#[derive(Clone)]
 struct Credentials {
     username: String,
     password: String,
     listen_port: u16,
 }
 
-/// One open search tab; `query` is the text the library files results under, without any `@user` or `#room` part.
-struct SearchPoll {
-    query: String,
-    responses: usize,
-    fetched: Option<Instant>,
+/// One search tab and every reply it has collected, across wishlist reruns.
+#[derive(Default)]
+struct Tab {
+    replies: Vec<SearchReply>,
+    seen: HashSet<(String, String)>,
+    dirty: bool,
+    sent: Option<Instant>,
+}
+
+impl Tab {
+    /// Keeps only files this tab has not shown yet; returns how many were new.
+    fn merge(&mut self, mut reply: SearchReply) -> usize {
+        let username = reply.username.clone();
+        reply
+            .files
+            .retain(|file| self.seen.insert((username.clone(), file.name.clone())));
+        let added = reply.files.len();
+        if added > 0 {
+            self.replies.push(reply);
+            self.dirty = true;
+        }
+        added
+    }
 }
 
 struct FolderRequest {
     username: String,
-    folder: String,
     fallback: Vec<Wanted>,
     deadline: Instant,
 }
@@ -65,83 +84,65 @@ struct FolderRequest {
 struct Row {
     view: DownloadRow,
     wanted: Wanted,
-    status: Option<Receiver<DownloadStatus>>,
-}
-
-struct Reconnect {
-    attempt: u32,
-    at: Instant,
 }
 
 struct Worker {
     events: Sender<Event>,
-    client: Option<Arc<Client>>,
+    client: Option<Client>,
+    credentials: Option<Credentials>,
+    logged_in_once: bool,
+    attempt: u32,
     download_dir: PathBuf,
-    searches: HashMap<String, SearchPoll>,
-    folders: Vec<FolderRequest>,
+    tabs: HashMap<String, Tab>,
+    tokens: HashMap<u32, String>,
+    folders: HashMap<u32, FolderRequest>,
     rows: Vec<Row>,
-    next_id: u64,
     rows_dirty: bool,
     rows_sent: Instant,
-    queue_checked: Instant,
-    pinged: Instant,
-    reconnect: Option<Reconnect>,
-    displaced: bool,
     shares: Vec<PathBuf>,
     upload_slots: usize,
-    scanner: Scanner,
     uploads: Uploads,
-    browses: Vec<(String, Instant)>,
-    rooms: Vec<(String, bool)>,
+    uploads_sent: Instant,
+    browses: HashSet<String>,
     buddies: Buddies,
     lookup: Lookup,
-    away: bool,
     wishlist: Wishlist,
     discover: Discover,
     upnp: bool,
     portmap: Option<PortMapper>,
     download_limit: u64,
-    privileges_until: Option<Instant>,
-    public_feed: bool,
+    ignored: Vec<String>,
 }
 
 impl Worker {
     fn new(events: Sender<Event>) -> Self {
-        logger::init();
-        if std::env::var_os("LOG_LEVEL").is_none() && std::env::var_os("RUST_LOG").is_none() {
-            logger::set_log_level(LogLevel::Error);
-        }
         let now = Instant::now();
         Self {
-            scanner: Scanner::spawn(events.clone()),
             events,
             client: None,
+            credentials: None,
+            logged_in_once: false,
+            attempt: 0,
             download_dir: PathBuf::new(),
-            searches: HashMap::new(),
-            folders: Vec::new(),
+            tabs: HashMap::new(),
+            tokens: HashMap::new(),
+            folders: HashMap::new(),
             rows: Vec::new(),
-            next_id: 1,
             rows_dirty: false,
             rows_sent: now,
-            queue_checked: now,
-            pinged: now,
-            reconnect: None,
-            displaced: false,
             shares: Vec::new(),
             upload_slots: crate::config::DEFAULT_UPLOAD_SLOTS,
             uploads: Uploads::default(),
-            browses: Vec::new(),
-            rooms: Vec::new(),
+            uploads_sent: now,
+            browses: HashSet::new(),
             buddies: Buddies::default(),
             lookup: Lookup::default(),
-            away: false,
             wishlist: Wishlist::default(),
             discover: Discover::default(),
             upnp: false,
             portmap: None,
             download_limit: 0,
-            privileges_until: None,
-            public_feed: false,
+            ignored: Vec::new(),
         }
     }
 
@@ -154,6 +155,9 @@ impl Worker {
             }
             while let Ok(command) = commands.try_recv() {
                 self.handle(command);
+            }
+            while let Some(event) = self.client.as_mut().and_then(Client::try_event) {
+                self.on_net(event);
             }
             self.tick();
         }
@@ -168,35 +172,21 @@ impl Worker {
         self.emit(Event::Notice(level, text.into()));
     }
 
+    fn send(&self, request: ServerRequest) {
+        if let Some(client) = &self.client {
+            client.send(request);
+        }
+    }
+
+    fn send_all(&self, requests: Vec<ServerRequest>) {
+        for request in requests {
+            self.send(request);
+        }
+    }
+
     fn handle(&mut self, command: Command) {
         match command {
-            Command::Login(settings) => {
-                let LoginSettings {
-                    username,
-                    password,
-                    listen_port,
-                    download_dir,
-                    shares,
-                    upload_slots,
-                    buddies,
-                    likes,
-                    dislikes,
-                    upnp,
-                    download_limit,
-                } = settings;
-                self.buddies.set(buddies);
-                self.discover.set_interests(likes, dislikes);
-                self.download_dir = download_dir;
-                self.shares = shares;
-                self.upload_slots = upload_slots;
-                self.upnp = upnp;
-                self.download_limit = download_limit;
-                self.login(Credentials {
-                    username,
-                    password,
-                    listen_port,
-                });
-            }
+            Command::Login(settings) => self.login(settings),
             Command::SetUpnp(on) => {
                 self.upnp = on;
                 if on {
@@ -209,41 +199,47 @@ impl Worker {
             Command::SetDownloadLimit(kilobytes) => {
                 self.download_limit = kilobytes;
                 if let Some(client) = &self.client {
-                    client.set_download_speed_limit(kilobytes * 1024);
+                    client.set_download_limit(kilobytes * 1024);
                 }
             }
             Command::ChangePassword(password) => {
-                let result = match &self.client {
-                    Some(client) => client.change_password(&password),
-                    None => Err(SoulseekRs::NotConnected),
-                };
-                match result {
-                    Ok(()) => self.notice(NoticeLevel::Info, "password change sent to the server"),
-                    Err(err) => self.notice(
+                if self.client.is_some() {
+                    self.send(ServerRequest::ChangePassword(password));
+                    self.notice(NoticeLevel::Info, "password change sent to the server");
+                } else {
+                    self.notice(
                         NoticeLevel::Warning,
-                        format!("could not change the password: {}", describe(&err)),
-                    ),
+                        "could not change the password: not connected to the server",
+                    );
                 }
             }
             Command::Logout => self.logout(),
-            Command::Reconnect => self.reconnect_now(),
-            Command::Search(query) => self.search(query),
+            Command::Reconnect => self.reconnect(),
+            Command::Search(tab) => self.search(tab),
             Command::SetWishes(wishes) => {
                 for wish in &wishes {
-                    self.track_search(wish.clone(), wish.clone());
+                    self.tabs.entry(wish.clone()).or_default();
                 }
                 self.wishlist.set(wishes);
             }
             Command::AddWish(query) => {
-                self.track_search(query.clone(), query.clone());
-                self.wishlist.add(self.client.as_deref(), query);
+                self.tabs.entry(query.clone()).or_default();
+                self.wishlist.add(query);
             }
             Command::RemoveWish(query) => self.wishlist.remove(&query),
             Command::ForgetSearch(tab) => {
-                if let Some(poll) = self.searches.remove(&tab)
-                    && let Some(client) = &self.client
-                {
-                    let _ = client.forget_search(&poll.query);
+                self.tabs.remove(&tab);
+                let tokens: Vec<u32> = self
+                    .tokens
+                    .iter()
+                    .filter(|(_, owner)| **owner == tab)
+                    .map(|(token, _)| *token)
+                    .collect();
+                for token in tokens {
+                    self.tokens.remove(&token);
+                    if let Some(client) = &self.client {
+                        client.forget_search(token);
+                    }
                 }
             }
             Command::Download(files) => {
@@ -260,38 +256,37 @@ impl Worker {
                 folder,
                 fallback,
             } => self.request_folder(username, folder, fallback),
-            Command::Pause(id) => self.with_row(id, |client, row| {
-                let _ = client.pause_download(&row.view.username, &row.view.filename);
-            }),
-            Command::Resume(id) => self.with_row(id, |client, row| {
-                let _ = client.resume_download(&row.view.username, &row.view.filename);
-            }),
-            Command::Retry(id) => {
-                if let Some(ix) = self.rows.iter().position(|row| row.view.id == id) {
-                    self.start(ix);
+            Command::Pause(id) => {
+                if let Some(client) = &self.client {
+                    client.pause_download(id);
                 }
             }
-            Command::Cancel(id) => self.with_row(id, |client, row| {
-                let _ = client.cancel_download(&row.view.username, &row.view.filename);
-                row.view.state = DlState::Cancelled;
-                row.status = None;
-            }),
+            Command::Resume(id) | Command::Retry(id) => {
+                if let Some(client) = &self.client {
+                    client.resume_download(id);
+                }
+            }
+            Command::Cancel(id) => {
+                if let Some(client) = &self.client {
+                    client.cancel_download(id);
+                }
+            }
             Command::Remove(id) => {
                 if let Some(ix) = self.rows.iter().position(|row| row.view.id == id) {
-                    let row = self.rows.remove(ix);
+                    self.rows.remove(ix);
                     if let Some(client) = &self.client {
-                        let _ = client.remove_download(&row.view.username, &row.view.filename);
+                        client.remove_download(id);
                     }
                     self.rows_dirty = true;
                 }
             }
             Command::ClearFinished => {
-                let client = self.client.clone();
+                let client = self.client.as_ref();
                 self.rows.retain(|row| {
                     let finished =
                         matches!(row.view.state, DlState::Completed | DlState::Cancelled);
-                    if finished && let Some(client) = &client {
-                        let _ = client.remove_download(&row.view.username, &row.view.filename);
+                    if finished && let Some(client) = client {
+                        client.remove_download(row.view.id);
                     }
                     !finished
                 });
@@ -299,298 +294,411 @@ impl Worker {
             }
             Command::SetDownloadDir(dir) => self.download_dir = dir,
             Command::SetShares(dirs) => {
-                self.shares = dirs;
-                self.rescan();
+                self.shares = dirs.clone();
+                if let Some(client) = &self.client {
+                    client.set_shares(dirs);
+                    self.scanning();
+                }
             }
-            Command::Rescan => self.rescan(),
+            Command::Rescan => {
+                if let Some(client) = &self.client {
+                    client.rescan();
+                    self.scanning();
+                }
+            }
             Command::SetUploadSlots(slots) => {
                 self.upload_slots = slots;
                 if let Some(client) = &self.client {
                     client.set_upload_slots(slots);
                 }
             }
-            Command::CancelUpload { username, filename } => {
+            Command::CancelUpload(id) => {
                 if let Some(client) = &self.client {
-                    let _ = client.cancel_upload(&username, &filename);
+                    client.cancel_upload(id);
                 }
             }
-            Command::Browse(username) => self.browse(username),
-            Command::Watch(name) => self.buddies.add(self.client.as_deref(), name),
-            Command::Unwatch(name) => self.buddies.remove(self.client.as_deref(), &name),
+            Command::ClearUploads => self.uploads.clear_finished(),
+            Command::Browse(username) => {
+                if let Some(client) = &self.client {
+                    client.browse(&username);
+                    self.browses.insert(username);
+                } else {
+                    self.emit(Event::Browse {
+                        username,
+                        result: Err("not connected to the server".into()),
+                    });
+                }
+            }
+            Command::Watch(name) => {
+                let requests = self.buddies.add(name);
+                self.send_all(requests);
+                self.emit(Event::Buddies(self.buddies.cards()));
+            }
+            Command::Unwatch(name) => {
+                let requests = self.buddies.remove(&name);
+                self.send_all(requests);
+                self.emit(Event::Buddies(self.buddies.cards()));
+            }
             Command::LookUp(name) => {
+                let requests = self.lookup.start(name.clone());
+                self.send_all(requests);
                 if let Some(client) = &self.client {
-                    self.lookup.start(client, name);
+                    client.user_info(&name);
                 }
             }
-            Command::SetAway(away) => {
-                self.away = away;
-                if let Some(client) = &self.client {
-                    let _ = client.set_away(away);
-                }
-            }
-            Command::Discover => {
-                if let Some(client) = &self.client {
-                    self.discover.refresh(client);
-                }
-            }
+            Command::SetAway(away) => self.send(ServerRequest::SetStatus(if away {
+                UserStatus::Away
+            } else {
+                UserStatus::Online
+            })),
+            Command::Discover => self.send_all(self.discover.refresh()),
             Command::DiscoverItem(item) => {
-                if let Some(client) = &self.client {
-                    self.discover.open_item(client, item);
-                }
+                let requests = self.discover.open_item(item);
+                self.send_all(requests);
             }
             Command::SetInterest { item, like, add } => {
-                self.discover
-                    .set_interest(self.client.as_deref(), item, like, add);
+                let requests = self.discover.set_interest(item, like, add);
+                self.send_all(requests);
             }
-            Command::RoomList => {
-                if let Some(client) = &self.client {
-                    let _ = client.request_room_list();
-                }
-            }
+            Command::RoomList => self.send(ServerRequest::RoomList),
             Command::JoinRoom { room, private } => {
-                if let Some(client) = &self.client {
-                    let _ = if private {
-                        client.join_private_room(&room)
-                    } else {
-                        client.join_room(&room)
-                    };
-                }
-                if !self.rooms.iter().any(|(joined, _)| *joined == room) {
-                    self.rooms.push((room, private));
-                }
+                self.send(ServerRequest::JoinRoom { room, private })
             }
-            Command::LeaveRoom(room) => {
-                if let Some(client) = &self.client {
-                    let _ = client.leave_room(&room);
-                }
-                self.rooms.retain(|(joined, _)| *joined != room);
-            }
-            Command::Say { room, text } => {
-                if let Some(client) = &self.client
-                    && let Err(err) = client.say_in_room(&room, &text)
-                {
-                    self.notice(
-                        NoticeLevel::Warning,
-                        format!("could not post in {room}: {}", describe(&err)),
-                    );
-                }
-            }
-            Command::PublicFeed(on) => {
-                self.public_feed = on;
-                if let Some(client) = &self.client {
-                    let _ = if on {
-                        client.join_global_room()
-                    } else {
-                        client.leave_global_room()
-                    };
-                }
-            }
+            Command::LeaveRoom(room) => self.send(ServerRequest::LeaveRoom(room)),
+            Command::Say { room, text } => self.send(ServerRequest::SayChatroom {
+                room,
+                message: text,
+            }),
+            Command::PublicFeed(on) => self.send(if on {
+                ServerRequest::JoinGlobalRoom
+            } else {
+                ServerRequest::LeaveGlobalRoom
+            }),
             Command::GivePrivileges { username, days } => {
-                if let Some(client) = &self.client {
-                    match client.give_privileges(&username, days) {
-                        Ok(()) => self.notice(
-                            NoticeLevel::Info,
-                            format!(
-                                "asked the server to give {username} {}",
-                                format::plural(days as usize, "day", "days")
-                            ),
-                        ),
-                        Err(err) => self.notice(
-                            NoticeLevel::Warning,
-                            format!("could not give privileges: {}", describe(&err)),
-                        ),
-                    }
-                }
+                self.send(ServerRequest::GivePrivileges {
+                    username: username.clone(),
+                    days,
+                });
+                self.notice(
+                    NoticeLevel::Info,
+                    format!(
+                        "asked the server to give {username} {}",
+                        format::plural(days as usize, "day", "days")
+                    ),
+                );
             }
             Command::SetTicker { room, ticker } => {
-                if let Some(client) = &self.client {
-                    let _ = client.set_room_ticker(&room, &ticker);
-                }
+                self.send(ServerRequest::SetRoomTicker { room, ticker })
             }
             Command::SendMessage { username, text } => {
-                let result = match &self.client {
-                    Some(client) => client.send_private_message(&username, &text),
-                    None => Err(SoulseekRs::NotConnected),
-                };
-                if let Err(err) = result {
+                if self.client.is_some() {
+                    self.send(ServerRequest::MessageUser {
+                        username,
+                        message: text,
+                    });
+                } else {
                     self.notice(
                         NoticeLevel::Warning,
-                        format!("could not send to {username}: {}", describe(&err)),
+                        format!("could not send to {username}: not connected to the server"),
                     );
                 }
             }
             Command::DownloadTree { root, files } => self.enqueue_tree(&root, files),
-            Command::ClearUploads => {
+            Command::SetIgnored(usernames) => {
+                self.ignored = usernames.clone();
                 if let Some(client) = &self.client {
-                    self.uploads.clear_finished(client);
+                    client.set_ignored(usernames);
                 }
             }
         }
     }
 
-    fn with_row(&mut self, id: u64, f: impl FnOnce(&Client, &mut Row)) {
-        let Some(client) = self.client.clone() else {
+    fn login(&mut self, settings: LoginSettings) {
+        let LoginSettings {
+            username,
+            password,
+            listen_port,
+            download_dir,
+            shares,
+            upload_slots,
+            buddies,
+            likes,
+            dislikes,
+            upnp,
+            download_limit,
+        } = settings;
+        self.logout_quietly();
+        self.buddies.set(buddies);
+        self.discover.set_interests(likes, dislikes);
+        self.download_dir = download_dir;
+        self.shares = shares;
+        self.upload_slots = upload_slots;
+        self.upnp = upnp;
+        self.download_limit = download_limit;
+        self.credentials = Some(Credentials {
+            username,
+            password,
+            listen_port,
+        });
+        self.logged_in_once = false;
+        self.start_client();
+    }
+
+    fn start_client(&mut self) {
+        let Some(credentials) = self.credentials.clone() else {
             return;
         };
-        if let Some(row) = self.rows.iter_mut().find(|row| row.view.id == id) {
-            f(&client, row);
-            self.rows_dirty = true;
-        }
-    }
-
-    fn login(&mut self, credentials: Credentials) {
-        self.emit(Event::Status(Status::Connecting));
-        self.drop_client();
-        self.reconnect = None;
-        self.displaced = false;
-
-        let mut settings = ClientSettings::new(&credentials.username, &credentials.password);
-        settings.listen_port = credentials.listen_port;
-        let mut client = Client::with_settings(settings);
-        if let Err(err) = client.connect() {
-            self.emit(Event::Status(Status::Failed(describe(&err))));
-            return;
-        }
-        match client.login() {
-            Ok(true) => {
-                self.emit(Event::LoggedIn(credentials.username.clone()));
-                self.emit(Event::Status(Status::Online));
-                if client.listen_port() != Some(credentials.listen_port) {
-                    self.notice(
-                        NoticeLevel::Warning,
-                        format!(
-                            "port {} was busy, listening on {}",
-                            credentials.listen_port,
-                            client
-                                .listen_port()
-                                .map_or("none".into(), |port| port.to_string())
-                        ),
-                    );
-                }
-                client.set_upload_slots(self.upload_slots);
-                client.set_download_speed_limit(self.download_limit * 1024);
-                let _ = client.check_privileges();
-                self.privileges_until = Some(Instant::now() + PRIVILEGES_WAIT);
-                let _ = client.request_room_list();
-                self.buddies.watch_all(&client);
-                self.discover.announce(&client);
-                self.discover.refresh(&client);
-                self.away = false;
-                self.client = Some(Arc::new(client));
-                self.pinged = Instant::now();
-                self.rescan();
-                if self.upnp {
-                    self.map_port();
+        let mut config = Config::new(credentials.username, credentials.password);
+        config.listen_port = credentials.listen_port;
+        config.shared_dirs = self.shares.clone();
+        config.share_cache = crate::config::data_dir().map(|dir| dir.join("share-cache.json"));
+        config.upload_slots = self.upload_slots;
+        match Client::start(config) {
+            Ok(client) => {
+                client.set_download_limit(self.download_limit * 1024);
+                client.set_ignored(self.ignored.clone());
+                self.client = Some(client);
+                self.attempt = 0;
+                self.emit(Event::Status(Status::Connecting));
+                if !self.shares.is_empty() {
+                    self.scanning();
                 }
             }
-            Ok(false) => self.emit(Event::Status(Status::Failed(
-                "the server refused the login".into(),
-            ))),
-            Err(err) => self.emit(Event::Status(Status::Failed(describe(&err)))),
+            Err(err) => self.emit(Event::Status(Status::Failed(format!(
+                "could not start the network: {err}"
+            )))),
         }
     }
 
-    /// The library forgets rooms and share counts across a re-login, so put them back.
-    fn restore_session(&self, client: &Client) {
-        self.requeue_peers(client);
-        self.rescan();
-        self.buddies.watch_all(client);
-        if self.public_feed {
-            let _ = client.join_global_room();
-        }
-        if self.away {
-            let _ = client.set_away(true);
-        }
-        for (room, private) in &self.rooms {
-            let _ = if *private {
-                client.join_private_room(room)
-            } else {
-                client.join_room(room)
-            };
-        }
+    fn scanning(&self) {
+        self.emit(Event::Shares(ShareState {
+            scanning: true,
+            ..ShareState::default()
+        }));
     }
 
-    /// Shares are scanned after login, so a slow disk never delays it.
-    fn rescan(&self) {
-        if let Some(client) = &self.client {
-            self.scanner.scan(client.clone(), &self.shares);
-        }
-    }
-
-    fn browse(&mut self, username: String) {
+    /// Logs in again after another session took over, putting unfinished downloads back in line.
+    fn reconnect(&mut self) {
+        self.client = None;
+        self.portmap = None;
+        self.start_client();
         let Some(client) = &self.client else {
             return;
         };
-        match client.browse_user(&username) {
-            Ok(()) => {
-                self.browses.retain(|(user, _)| *user != username);
-                self.browses
-                    .push((username, Instant::now() + BROWSE_TIMEOUT));
+        for row in &mut self.rows {
+            if row.view.state.is_live() {
+                let dest = row.view.local_dir.join(sanitize(&row.view.name));
+                row.view.id = client.download(
+                    &row.wanted.username,
+                    &row.wanted.filename,
+                    row.wanted.size,
+                    dest,
+                );
+                row.view.state = DlState::Queued { position: None };
             }
-            Err(err) => self.emit(Event::Browse {
-                username,
-                result: Err(describe(&err)),
-            }),
         }
+        self.rows_dirty = true;
     }
 
-    /// Big listings take a moment to parse, so the tree is built off the worker thread.
-    fn poll_browses(&mut self, client: &Client) {
-        let now = Instant::now();
-        let events = self.events.clone();
-        self.browses.retain(|(username, deadline)| {
-            if let Some(dirs) = client.take_browse_result(username) {
-                let (events, username) = (events.clone(), username.clone());
-                thread::spawn(move || {
-                    let listing = Listing::build(dirs);
-                    let _ = events.send(Event::Browse {
-                        username,
-                        result: Ok(Arc::new(listing)),
-                    });
-                });
-                false
-            } else if now >= *deadline {
-                let _ = events.send(Event::Browse {
-                    username: username.clone(),
-                    result: Err(format!(
-                        "no answer from {username}. they may be offline or unreachable."
-                    )),
-                });
-                false
-            } else {
-                true
-            }
-        });
-    }
-
-    fn map_port(&mut self) {
-        if let Some(client) = &self.client
-            && let Some(port) = client.listen_port()
-        {
-            self.portmap = Some(PortMapper::start(port, self.events.clone()));
-        }
-    }
-
-    fn drop_client(&mut self) {
-        self.portmap = None;
-        self.privileges_until = None;
-        self.scanner.invalidate();
-        self.uploads.reset();
-        self.browses.clear();
-        self.lookup = Lookup::default();
-        self.rooms.clear();
-        self.public_feed = false;
+    fn logout_quietly(&mut self) {
         self.client = None;
-    }
-
-    fn logout(&mut self) {
-        self.drop_client();
-        self.reconnect = None;
-        self.searches.clear();
+        self.portmap = None;
+        self.credentials = None;
+        self.tabs.clear();
+        self.tokens.clear();
         self.folders.clear();
         self.rows.clear();
         self.rows_dirty = false;
+        self.uploads.reset();
+        self.browses.clear();
+        self.lookup = Lookup::default();
+    }
+
+    fn logout(&mut self) {
+        self.logout_quietly();
         self.emit(Event::Status(Status::Offline));
+    }
+
+    fn map_port(&mut self) {
+        if self.client.is_some()
+            && let Some(credentials) = &self.credentials
+        {
+            self.portmap = Some(PortMapper::start(
+                credentials.listen_port,
+                self.events.clone(),
+            ));
+        }
+    }
+
+    fn on_net(&mut self, event: Net) {
+        match event {
+            Net::Session(session) => self.on_session(session),
+            Net::Server(message) => self.on_server(message),
+            Net::Listening { .. } => {
+                if self.upnp && self.portmap.is_none() {
+                    self.map_port();
+                }
+            }
+            Net::ListenFailed { port, error } => self.notice(
+                NoticeLevel::Warning,
+                format!(
+                    "could not listen on port {port}: {error}. other users cannot connect to you."
+                ),
+            ),
+            Net::SearchReply(reply) => self.on_search_reply(reply),
+            Net::Shares { username, list } => {
+                if self.browses.remove(&username) {
+                    let events = self.events.clone();
+                    thread::spawn(move || {
+                        let mut dirs: Vec<Directory> = list.dirs;
+                        dirs.extend(list.private_dirs);
+                        let listing = Listing::build(dirs);
+                        let _ = events.send(Event::Browse {
+                            username,
+                            result: Ok(Arc::new(listing)),
+                        });
+                    });
+                }
+            }
+            Net::FolderContents {
+                username,
+                token,
+                folder,
+                dirs,
+            } => {
+                if self.folders.remove(&token).is_some() {
+                    self.folder_arrived(&username, &folder, dirs);
+                }
+            }
+            Net::RequestFailed {
+                username,
+                request,
+                reason,
+            } => match request {
+                Request::Browse => {
+                    if self.browses.remove(&username) {
+                        self.emit(Event::Browse {
+                            username: username.clone(),
+                            result: Err(format!(
+                                "no answer from {username} ({reason}). they may be offline or unreachable."
+                            )),
+                        });
+                    }
+                }
+                Request::FolderContents { token, .. } => {
+                    if let Some(request) = self.folders.remove(&token) {
+                        self.folder_fallback(request);
+                    }
+                }
+                Request::UserInfo => {
+                    if let Some(card) = self.lookup.info_failed(&username) {
+                        self.emit(Event::Card(card));
+                    }
+                }
+            },
+            Net::UserInfo { username, info } => {
+                if let Some(card) = self.lookup.apply_info(&username, info) {
+                    self.emit(Event::Card(card));
+                }
+            }
+            Net::SharesScanned { dirs, files } => self.emit(Event::Shares(ShareState {
+                scanning: false,
+                folders: dirs as u32,
+                files: files as u32,
+            })),
+            Net::Download(update) => self.on_download(update),
+            Net::Upload(update) => self.uploads.apply(update),
+        }
+    }
+
+    fn on_session(&mut self, session: Session) {
+        match session {
+            Session::Connecting { attempt } => {
+                self.attempt = attempt;
+                if self.logged_in_once {
+                    self.emit(Event::Status(Status::Reconnecting { attempt }));
+                }
+            }
+            Session::LoggedIn { .. } => {
+                if !self.logged_in_once {
+                    self.logged_in_once = true;
+                    if let Some(credentials) = &self.credentials {
+                        self.emit(Event::LoggedIn(credentials.username.clone()));
+                    }
+                    self.send_all(self.buddies.watch_all());
+                    self.send_all(self.discover.announce());
+                    self.send_all(self.discover.refresh());
+                    self.send(ServerRequest::RoomList);
+                    self.emit(Event::Buddies(self.buddies.cards()));
+                }
+                self.emit(Event::Status(Status::Online));
+            }
+            Session::Rejected { reason, detail } => {
+                self.client = None;
+                self.emit(Event::Status(Status::Failed(describe_rejection(
+                    &reason,
+                    detail.as_deref(),
+                ))));
+            }
+            Session::Relogged => self.emit(Event::Status(Status::Displaced)),
+            Session::Lost { error, .. } => {
+                if self.logged_in_once {
+                    self.emit(Event::Status(Status::Reconnecting {
+                        attempt: self.attempt.max(1),
+                    }));
+                } else {
+                    self.client = None;
+                    self.emit(Event::Status(Status::Failed(format!(
+                        "could not reach the server: {error}"
+                    ))));
+                }
+            }
+            Session::Disconnected => {}
+        }
+    }
+
+    fn on_server(&mut self, message: ServerResponse) {
+        let room_events = RoomEvent::from_server(&message);
+        if !room_events.is_empty() {
+            self.emit(Event::Rooms {
+                at: unix_now(),
+                events: room_events,
+            });
+            return;
+        }
+        if let Some(cards) = self.buddies.apply(&message) {
+            self.emit(Event::Buddies(cards));
+        }
+        if let Some(card) = self.lookup.apply(&message) {
+            self.emit(Event::Card(card));
+        }
+        if let Some(discovery) = self.discover.apply(&message) {
+            self.emit(Event::Discovery(discovery));
+        }
+        match message {
+            ServerResponse::MessageUser {
+                timestamp,
+                username,
+                message,
+                new,
+                ..
+            } => self.emit(Event::Message {
+                username,
+                text: message,
+                at: i64::from(timestamp),
+                new,
+            }),
+            ServerResponse::CheckPrivileges(seconds) => self.emit(Event::Privileges(seconds)),
+            ServerResponse::WishlistInterval(seconds) => self.wishlist.set_interval(seconds),
+            ServerResponse::ChangePassword(_) => {
+                self.notice(NoticeLevel::Info, "the server changed your password")
+            }
+            ServerResponse::AdminMessage(text) => self.notice(
+                NoticeLevel::Alert,
+                format!("message from the server: {text}"),
+            ),
+            _ => {}
+        }
     }
 
     fn search(&mut self, tab: String) {
@@ -598,48 +706,86 @@ impl Worker {
             return;
         };
         let (scope, query) = parse_scope(&tab);
-        let result = match &scope {
-            Scope::Everyone => client.search(&query, Duration::ZERO).map(|_| ()),
-            Scope::User(user) => client.search_user(user, &query),
-            Scope::Room(room) => client.search_room(room, &query),
+        let scope = match scope {
+            Scope::Everyone => SearchScope::Network,
+            Scope::User(user) => SearchScope::User(user),
+            Scope::Room(room) => SearchScope::Room(room),
         };
-        match result {
-            Ok(()) => self.track_search(tab, query),
-            Err(err) => self.notice(
-                NoticeLevel::Warning,
-                format!("search failed: {}", describe(&err)),
-            ),
-        }
+        let token = client.search(scope, &query);
+        self.tokens.insert(token, tab.clone());
+        self.tabs.entry(tab).or_default();
     }
 
-    fn track_search(&mut self, tab: String, query: String) {
-        self.searches.entry(tab).or_insert(SearchPoll {
-            query,
-            responses: usize::MAX,
-            fetched: None,
-        });
+    fn on_search_reply(&mut self, reply: SearchReply) {
+        let Some(name) = self.tokens.get(&reply.token).cloned() else {
+            return;
+        };
+        if self.ignored.contains(&reply.username) {
+            return;
+        }
+        let Some(tab) = self.tabs.get_mut(&name) else {
+            return;
+        };
+        let added = tab.merge(reply);
+        if self.wishlist.is_wish(&name) {
+            let fresh = self.wishlist.fresh(&name, added);
+            if fresh > 0 {
+                self.notice(
+                    NoticeLevel::Alert,
+                    format!(
+                        "wishlist: {} for {name}",
+                        format::plural(fresh, "new result", "new results")
+                    ),
+                );
+            }
+        }
     }
 
     fn request_folder(&mut self, username: String, folder: String, fallback: Vec<Wanted>) {
         let Some(client) = &self.client else {
             return;
         };
-        if client.request_folder_contents(&username, &folder).is_err() {
-            for file in fallback {
-                self.enqueue(file);
+        let token = client.folder_contents(&username, &folder);
+        let label = format::split_path(&folder).1.to_string();
+        self.notice(NoticeLevel::Info, format!("asking {username} for {label}"));
+        self.folders.insert(
+            token,
+            FolderRequest {
+                username,
+                fallback,
+                deadline: Instant::now() + FOLDER_TIMEOUT,
+            },
+        );
+    }
+
+    fn folder_arrived(&mut self, username: &str, folder: &str, dirs: Vec<Directory>) {
+        let mut files = Vec::new();
+        for dir in dirs {
+            let relative = dir.name.strip_prefix(folder).unwrap_or("").to_string();
+            for entry in dir.files {
+                let wanted = Wanted {
+                    username: username.to_string(),
+                    filename: format!("{}\\{}", dir.name, entry.name),
+                    size: entry.size,
+                };
+                files.push((wanted, relative.clone()));
             }
-            return;
+        }
+        self.enqueue_tree(folder, files);
+    }
+
+    fn folder_fallback(&mut self, request: FolderRequest) {
+        let count = request.fallback.len();
+        for wanted in request.fallback {
+            self.enqueue(wanted);
         }
         self.notice(
-            NoticeLevel::Info,
-            format!("asking {username} for {}", format::split_path(&folder).1),
+            NoticeLevel::Warning,
+            format!(
+                "{} did not list the folder, queued the {count} matching files",
+                request.username
+            ),
         );
-        self.folders.push(FolderRequest {
-            username,
-            folder,
-            fallback,
-            deadline: Instant::now() + FOLDER_TIMEOUT,
-        });
     }
 
     fn enqueue(&mut self, wanted: Wanted) -> bool {
@@ -648,22 +794,25 @@ impl Worker {
 
     /// Adds a download row and starts it. Returns false when it is already queued.
     fn enqueue_to(&mut self, wanted: Wanted, dir: Option<PathBuf>) -> bool {
-        if let Some(ix) = self.rows.iter().position(|row| {
+        let Some(client) = &self.client else {
+            return false;
+        };
+        if let Some(row) = self.rows.iter().find(|row| {
             row.view.username == wanted.username && row.view.filename == wanted.filename
         }) {
-            let state = &self.rows[ix].view.state;
+            let state = &row.view.state;
             if state.is_live() || *state == DlState::Completed {
                 return false;
             }
-            self.start(ix);
+            client.resume_download(row.view.id);
             return true;
         }
 
         let (folder, name) = format::split_path(&wanted.filename);
         let folder = format::split_path(folder).1.to_string();
         let local_dir = dir.unwrap_or_else(|| self.local_dir(&wanted.username, &folder, name));
-        let id = self.next_id;
-        self.next_id += 1;
+        let dest = local_dir.join(sanitize(name));
+        let id = client.download(&wanted.username, &wanted.filename, wanted.size, dest);
         self.rows.push(Row {
             view: DownloadRow {
                 id,
@@ -676,9 +825,8 @@ impl Worker {
                 state: DlState::Queued { position: None },
             },
             wanted,
-            status: None,
         });
-        self.start(self.rows.len() - 1);
+        self.rows_dirty = true;
         true
     }
 
@@ -697,222 +845,6 @@ impl Worker {
                 .join(sanitize(&format!("{folder} ({username})")))
         } else {
             base
-        }
-    }
-
-    fn start(&mut self, ix: usize) {
-        let Some(client) = self.client.clone() else {
-            return;
-        };
-        let row = &mut self.rows[ix];
-        let dir = row.view.local_dir.to_string_lossy().into_owned();
-        let metadata = DownloadMetadata {
-            bitrate: row.wanted.bitrate,
-            length_seconds: row.wanted.duration,
-            ..Default::default()
-        };
-        match client.download_with_metadata(
-            row.wanted.filename.clone(),
-            row.wanted.username.clone(),
-            row.wanted.size,
-            dir,
-            metadata,
-        ) {
-            Ok((_, status)) => {
-                row.status = Some(status);
-                row.view.state = DlState::Queued { position: None };
-            }
-            Err(err) => {
-                row.status = None;
-                row.view.state = DlState::Failed(describe(&err));
-            }
-        }
-        self.rows_dirty = true;
-    }
-
-    fn tick(&mut self) {
-        self.watch_session();
-        let Some(client) = self.client.clone() else {
-            return;
-        };
-        if !self.displaced && self.reconnect.is_none() && self.pinged.elapsed() >= PING_EVERY {
-            self.pinged = Instant::now();
-            let _ = client.ping_server();
-        }
-        if self.wishlist.run_due(&client) {
-            for wish in self.wishlist.wishes() {
-                if let Some(poll) = self.searches.get_mut(wish) {
-                    poll.responses = usize::MAX;
-                }
-            }
-        }
-        self.poll_searches(&client);
-        self.poll_folders(&client);
-        self.poll_downloads(&client);
-        self.poll_browses(&client);
-        if let Some(cards) = self.buddies.poll(&client) {
-            self.emit(Event::Buddies(cards));
-        }
-        if let Some(until) = self.privileges_until {
-            if let Some(seconds) = client.own_privilege_seconds() {
-                self.privileges_until = None;
-                self.emit(Event::Privileges(seconds));
-            } else if Instant::now() >= until {
-                self.privileges_until = None;
-            }
-        }
-        if let Some(discovery) = self.discover.poll(&client) {
-            self.emit(Event::Discovery(discovery));
-        }
-        if let Some(card) = self.lookup.poll(&client) {
-            self.emit(Event::Card(card));
-        }
-        let room_events = client.take_room_events();
-        if !room_events.is_empty() {
-            for event in &room_events {
-                if let RoomEvent::Left { room } = event {
-                    self.rooms.retain(|(joined, _)| joined != room);
-                }
-            }
-            self.emit(Event::Rooms {
-                at: unix_now(),
-                events: room_events,
-            });
-        }
-        for message in client.take_private_messages() {
-            self.emit(Event::Message {
-                username: message.username().to_string(),
-                text: message.message().to_string(),
-                at: i64::from(message.timestamp()),
-                new: message.is_new(),
-            });
-        }
-        if let Some(rows) = self.uploads.poll(&client) {
-            self.emit(Event::Uploads(rows));
-        }
-    }
-
-    fn watch_session(&mut self) {
-        let Some(client) = self.client.clone() else {
-            return;
-        };
-        if self.displaced {
-            return;
-        }
-        match client.session_loss() {
-            None => {
-                if self.reconnect.take().is_some() {
-                    self.emit(Event::Status(Status::Online));
-                }
-            }
-            Some(SessionLoss::Displaced) => {
-                self.displaced = true;
-                self.reconnect = None;
-                self.emit(Event::Status(Status::Displaced));
-            }
-            Some(SessionLoss::Disconnected) => {
-                let reconnect = self.reconnect.get_or_insert_with(|| Reconnect {
-                    attempt: 0,
-                    at: Instant::now(),
-                });
-                if Instant::now() < reconnect.at {
-                    return;
-                }
-                reconnect.attempt += 1;
-                let attempt = reconnect.attempt;
-                self.emit(Event::Status(Status::Reconnecting { attempt }));
-                if matches!(client.login(), Ok(true)) {
-                    self.reconnect = None;
-                    self.emit(Event::Status(Status::Online));
-                    self.restore_session(&client);
-                } else {
-                    let backoff =
-                        Duration::from_secs(5 * 2u64.pow(attempt.min(4))).min(MAX_BACKOFF);
-                    if let Some(reconnect) = &mut self.reconnect {
-                        reconnect.at = Instant::now() + backoff;
-                    }
-                }
-            }
-        }
-    }
-
-    /// Queued rows are only re-sent once a connection to their peer exists again.
-    fn requeue_peers(&self, client: &Client) {
-        let mut users: Vec<&str> = self
-            .rows
-            .iter()
-            .filter(|row| matches!(row.view.state, DlState::Queued { .. }))
-            .map(|row| row.view.username.as_str())
-            .collect();
-        users.sort_unstable();
-        users.dedup();
-        for user in users {
-            let _ = client.connect_peer(user);
-        }
-    }
-
-    /// Logs the existing client in again, so running transfers keep their channels.
-    fn reconnect_now(&mut self) {
-        let Some(client) = self.client.clone() else {
-            return;
-        };
-        self.emit(Event::Status(Status::Reconnecting { attempt: 1 }));
-        match client.login() {
-            Ok(true) => {
-                self.displaced = false;
-                self.reconnect = None;
-                self.emit(Event::Status(Status::Online));
-                self.restore_session(&client);
-            }
-            Ok(false) => self.reconnect_failed("the server refused the login".into()),
-            Err(err) => self.reconnect_failed(describe(&err)),
-        }
-    }
-
-    fn reconnect_failed(&mut self, reason: String) {
-        let status = if self.displaced {
-            Status::Displaced
-        } else {
-            Status::Reconnecting { attempt: 1 }
-        };
-        self.emit(Event::Status(status));
-        self.notice(
-            NoticeLevel::Warning,
-            format!("could not log in again: {reason}"),
-        );
-    }
-
-    fn poll_searches(&mut self, client: &Client) {
-        for (tab, poll) in &mut self.searches {
-            if poll.fetched.is_some_and(|at| at.elapsed() < SEARCH_REFRESH) {
-                continue;
-            }
-            let query = &poll.query;
-            let responses = client.get_search_results_count(query);
-            if responses == poll.responses {
-                continue;
-            }
-            poll.responses = responses;
-            poll.fetched = Some(Instant::now());
-            let mut results = client.get_search_results(query);
-            if self.wishlist.is_wish(query) {
-                results = self.wishlist.view(query, results);
-                let fresh = self.wishlist.fresh(query, &results);
-                if fresh > 0 {
-                    let _ = self.events.send(Event::Notice(
-                        NoticeLevel::Alert,
-                        format!(
-                            "wishlist: {} for {query}",
-                            format::plural(fresh, "new result", "new results")
-                        ),
-                    ));
-                }
-            }
-            let hits = group(&results);
-            let _ = self.events.send(Event::Search {
-                query: tab.clone(),
-                hits: Arc::new(hits),
-            });
         }
     }
 
@@ -939,55 +871,20 @@ impl Worker {
         );
     }
 
-    fn poll_folders(&mut self, client: &Client) {
-        let mut ready = Vec::new();
-        let mut expired = Vec::new();
-        self.folders.retain_mut(|request| {
-            if let Some(dirs) = client.take_folder_contents(&request.username, &request.folder) {
-                ready.push((request.username.clone(), request.folder.clone(), dirs));
-                false
-            } else if Instant::now() >= request.deadline {
-                expired.push((
-                    request.username.clone(),
-                    std::mem::take(&mut request.fallback),
-                ));
-                false
-            } else {
-                true
-            }
-        });
-
-        for (username, folder, dirs) in ready {
-            let mut files = Vec::new();
-            for dir in dirs {
-                let relative = dir
-                    .name
-                    .strip_prefix(folder.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                for entry in dir.files {
-                    let wanted = Wanted {
-                        username: username.clone(),
-                        filename: format!("{}\\{}", dir.name, entry.name),
-                        size: entry.size,
-                        bitrate: entry.attribute(0),
-                        duration: entry.attribute(1),
-                    };
-                    files.push((wanted, relative.clone()));
-                }
-            }
-            self.enqueue_tree(&folder, files);
+    fn on_download(&mut self, update: TransferUpdate) {
+        let Some(row) = self.rows.iter_mut().find(|row| row.view.id == update.id) else {
+            return;
+        };
+        let state = download_state(&update);
+        if row.view.state == state {
+            return;
         }
-
-        for (username, fallback) in expired {
-            let count = fallback.len();
-            for wanted in fallback {
-                self.enqueue(wanted);
-            }
-            self.notice(
-                NoticeLevel::Warning,
-                format!("{username} did not list the folder, queued the {count} matching files"),
-            );
+        let finished = state == DlState::Completed;
+        row.view.state = state;
+        self.rows_dirty = true;
+        if finished {
+            let dir = row.view.local_dir.clone();
+            self.announce_finished(&dir);
         }
     }
 
@@ -1013,98 +910,94 @@ impl Worker {
         self.notice(NoticeLevel::Alert, format!("downloaded {label}"));
     }
 
-    fn poll_downloads(&mut self, client: &Client) {
-        let mut finished_dirs: Vec<PathBuf> = Vec::new();
-        for row in &mut self.rows {
-            let Some(status) = &row.status else {
-                continue;
-            };
-            let mut terminal = false;
-            while let Ok(update) = status.try_recv() {
-                let state = map_status(update);
-                terminal = !state.is_live();
-                if row.view.state != state {
-                    if state == DlState::Completed {
-                        finished_dirs.push(row.view.local_dir.clone());
-                    }
-                    row.view.state = state;
-                    self.rows_dirty = true;
-                }
-            }
-            if terminal {
-                row.status = None;
+    fn tick(&mut self) {
+        for wish in self.wishlist.due() {
+            if let Some(client) = &self.client {
+                let token = client.search(SearchScope::Wishlist, &wish);
+                self.tokens.insert(token, wish.clone());
+                self.tabs.entry(wish).or_default();
             }
         }
-        finished_dirs.dedup();
-        for dir in finished_dirs {
-            self.announce_finished(&dir);
-        }
-
-        if self.queue_checked.elapsed() >= QUEUE_REFRESH {
-            self.queue_checked = Instant::now();
-            for download in client.get_all_downloads() {
-                let Some(row) = self.rows.iter_mut().find(|row| {
-                    row.view.username == download.username && row.view.filename == download.filename
-                }) else {
-                    continue;
-                };
-                if let DlState::Queued { position } = &mut row.view.state
-                    && *position != download.queue_position
-                {
-                    *position = download.queue_position;
-                    self.rows_dirty = true;
-                }
+        for (name, tab) in &mut self.tabs {
+            if tab.dirty && tab.sent.is_none_or(|at| at.elapsed() >= SEARCH_REFRESH) {
+                tab.dirty = false;
+                tab.sent = Some(Instant::now());
+                let _ = self.events.send(Event::Search {
+                    query: name.clone(),
+                    hits: Arc::new(group(&tab.replies)),
+                });
             }
         }
-
+        let now = Instant::now();
+        let late: Vec<u32> = self
+            .folders
+            .iter()
+            .filter(|(_, request)| now >= request.deadline)
+            .map(|(token, _)| *token)
+            .collect();
+        for token in late {
+            if let Some(request) = self.folders.remove(&token) {
+                self.folder_fallback(request);
+            }
+        }
+        if let Some(card) = self.lookup.tick() {
+            self.emit(Event::Card(card));
+        }
         if self.rows_dirty && self.rows_sent.elapsed() >= DOWNLOADS_REFRESH {
             self.rows_dirty = false;
             self.rows_sent = Instant::now();
             let rows = self.rows.iter().map(|row| row.view.clone()).collect();
             self.emit(Event::Downloads(Arc::new(rows)));
         }
-    }
-}
-
-fn map_status(status: DownloadStatus) -> DlState {
-    match status {
-        DownloadStatus::Queued => DlState::Queued { position: None },
-        DownloadStatus::InProgress {
-            bytes_downloaded,
-            total_bytes,
-            speed_bytes_per_sec,
-        } => DlState::Active {
-            done: bytes_downloaded,
-            total: total_bytes,
-            speed: speed_bytes_per_sec.max(0.0) as u64,
-        },
-        DownloadStatus::Paused {
-            bytes_downloaded,
-            total_bytes,
-        } => DlState::Paused {
-            done: bytes_downloaded,
-            total: total_bytes,
-        },
-        DownloadStatus::Completed => DlState::Completed,
-        DownloadStatus::Cancelled => DlState::Cancelled,
-        DownloadStatus::Failed(reason) => DlState::Failed(
-            reason
-                .map(|reason| reason.trim_end_matches('.').to_lowercase())
-                .unwrap_or_else(|| "failed".into()),
-        ),
-        DownloadStatus::TimedOut => DlState::Failed("timed out".into()),
-    }
-}
-
-fn describe(err: &SoulseekRs) -> String {
-    match err {
-        SoulseekRs::AuthenticationFailed => {
-            "wrong password, or that name belongs to someone else".into()
+        if self.uploads_sent.elapsed() >= UPLOADS_REFRESH {
+            self.uploads_sent = Instant::now();
+            if let Some(rows) = self.uploads.take_changed() {
+                self.emit(Event::Uploads(rows));
+            }
         }
-        SoulseekRs::Timeout => "the server did not answer".into(),
-        SoulseekRs::NotConnected => "not connected to the server".into(),
-        SoulseekRs::NetworkError(err) => format!("network error: {err}"),
-        other => other.to_string().to_lowercase(),
+    }
+}
+
+fn download_state(update: &TransferUpdate) -> DlState {
+    match &update.state {
+        TransferState::Queued { place } => DlState::Queued { position: *place },
+        TransferState::Connecting => DlState::Active {
+            done: 0,
+            total: update.size,
+            speed: 0,
+        },
+        TransferState::Transferring { bytes, speed } => DlState::Active {
+            done: *bytes,
+            total: update.size,
+            speed: *speed,
+        },
+        TransferState::Paused { bytes } => DlState::Paused {
+            done: *bytes,
+            total: update.size,
+        },
+        TransferState::Done => DlState::Completed,
+        TransferState::Cancelled => DlState::Cancelled,
+        TransferState::Failed(reason) => DlState::Failed(tidy_reason(reason)),
+    }
+}
+
+fn describe_rejection(reason: &str, detail: Option<&str>) -> String {
+    match reason {
+        "INVALIDPASS" => "wrong password, or that name belongs to someone else".into(),
+        "INVALIDUSERNAME" => detail.map_or_else(
+            || "the server does not allow that name".into(),
+            |detail| {
+                format!(
+                    "the server does not allow that name: {}",
+                    tidy_reason(detail)
+                )
+            },
+        ),
+        "EMPTYPASSWORD" => "enter a password".into(),
+        "INVALIDVERSION" => "the server no longer accepts this version of bawkseek".into(),
+        "SVRFULL" => "the server is full. try again later.".into(),
+        "SVRPRIVATE" => "the server is not taking new accounts right now".into(),
+        other => format!("the server refused the login: {}", other.to_lowercase()),
     }
 }
 
@@ -1138,6 +1031,8 @@ pub fn sanitize(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use slsk::proto::types::FileEntry;
+
     use super::*;
 
     #[test]
@@ -1151,14 +1046,46 @@ mod tests {
     }
 
     #[test]
-    fn maps_failure_reasons() {
+    fn maps_download_states() {
+        let update = |state| TransferUpdate {
+            id: 1,
+            username: "ann".into(),
+            filename: "a.mp3".into(),
+            size: 100,
+            state,
+            path: None,
+        };
         assert_eq!(
-            map_status(DownloadStatus::Failed(Some("File not shared.".into()))),
+            download_state(&update(TransferState::Failed("File not shared.".into()))),
             DlState::Failed("file not shared".into())
         );
         assert_eq!(
-            map_status(DownloadStatus::Failed(None)),
-            DlState::Failed("failed".into())
+            download_state(&update(TransferState::Transferring { bytes: 5, speed: 9 })),
+            DlState::Active {
+                done: 5,
+                total: 100,
+                speed: 9
+            }
         );
+    }
+
+    #[test]
+    fn tabs_keep_each_file_once() {
+        let mut tab = Tab::default();
+        let reply = |files: &[&str]| SearchReply {
+            username: "ann".into(),
+            files: files
+                .iter()
+                .map(|name| FileEntry {
+                    name: (*name).into(),
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        };
+        assert_eq!(tab.merge(reply(&["a", "b"])), 2);
+        assert_eq!(tab.merge(reply(&["b", "c"])), 1);
+        assert_eq!(tab.merge(reply(&["a"])), 0);
+        assert_eq!(tab.replies.len(), 2);
     }
 }

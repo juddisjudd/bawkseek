@@ -430,7 +430,7 @@ fn file_row(
     } else {
         format::bytes(row.size)
     };
-    let (username, filename) = (row.username.clone(), row.filename.clone());
+    let id = row.id;
 
     let el = div()
         .id(("upload", row.id as usize))
@@ -496,13 +496,7 @@ fn file_row(
                     this.child(
                         kit::icon_button(("cancel-upload", row.id as usize), IconName::X, "cancel")
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.send(
-                                    Command::CancelUpload {
-                                        username: username.clone(),
-                                        filename: filename.clone(),
-                                    },
-                                    cx,
-                                )
+                                this.send(Command::CancelUpload(id), cx)
                             })),
                     )
                 }),

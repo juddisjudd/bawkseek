@@ -4,7 +4,7 @@ use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{Icon, Sizable};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use soulseek_rs::Recommendation;
+use slsk::proto::types::Recommendation;
 
 use super::{UserAction, kit};
 use crate::format;
@@ -197,7 +197,7 @@ impl DiscoverView {
                             .flex()
                             .justify_end()
                             .text_color(p.text_weak)
-                            .child(format!("{:+}", recommendation.rating)),
+                            .child(format!("{:+}", recommendation.score)),
                     )
                     .child(
                         kit::icon_button(
