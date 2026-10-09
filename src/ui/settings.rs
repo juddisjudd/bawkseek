@@ -13,6 +13,9 @@ use crate::config::Config;
 use crate::net::{PortMap, Session};
 use crate::theme::{self, DEFAULT_THEME, Look, Mode, Palette, palette};
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const RELEASES_URL: &str = "https://github.com/juddisjudd/bawkseek/releases";
+
 pub enum SettingsEvent {
     DownloadDir(PathBuf),
     ListenPort(u16),
@@ -525,6 +528,24 @@ impl Render for SettingsView {
                         &p,
                     ))
                     .child(self.render_looks(&p, cx)),
+            )
+            .child(
+                section("about", &p).child(field(
+                    "version",
+                    "new versions are published on github",
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(kit::strong(format!("bawkseek {VERSION}"), &p))
+                        .child(
+                            kit::button("releases", cx)
+                                .small()
+                                .label("releases…")
+                                .on_click(|_, _, cx| cx.open_url(RELEASES_URL)),
+                        ),
+                    &p,
+                )),
             )
     }
 }

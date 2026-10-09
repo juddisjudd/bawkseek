@@ -1,32 +1,107 @@
 # bawkseek
 
-A Soulseek desktop client for Windows, built in Rust with [GPUI Kit](https://gpui-kit.com). It looks and feels like [bawkterm](https://bawkterm.com).
+bawkseek is a Windows app for [Soulseek](https://www.slsknet.org), the long-running network where people share music straight from their own computers. Search everyone's shared folders, download whole albums, chat, and play your music, all in one window. It looks and feels like [bawkterm](https://bawkterm.com).
 
-> Status: early. Search, downloads, sharing, browsing, messages, chat rooms, buddies, the wishlist and recommendations work: the Soulseek features the protocol library supports are all in.
+## Get started
 
-## What works
+### 1. Download
 
-- **Log in**: any free name and a password. The server makes the account on first login. "Remember me" keeps the password in Windows Credential Manager.
-- **Search**: results arrive live and group by folder, with the format and quality of each folder (flac 24/96, mp3 320). Each format has its own color: cool for lossless, warm for lossy. Sort by speed, folder, user, file count or size. Filter by text (`-word` excludes), pick formats and a minimum quality (any, 128 to 320 kbps, lossless, 24-bit), or show free slots only. Format chips write `.flac` into the filter box, which also reads bitrate limits such as `>128`, `>= 192` or `<320`; open folders then list only the files that pass. Start a search with `@user` to search one user's shares or `#room` to search a room (quote names with spaces: `#"The Lobby" flac`). Each search stays open in its own tab. Press "keep searching" to put a search on your wishlist: it reruns on the server's schedule, keeps every earlier result, and tells you when new ones turn up.
-- **Download**: a single file, or a whole folder. A folder download asks the user for the complete folder listing and keeps subfolders such as `CD1` or `Scans`.
-- **Browse**: open any user's shared folders as a tree, from the browse page or by clicking a username in search, transfers or uploads. Filter by folder or file name, download single files or a whole folder with its subfolders. Folders with more than 200 files ask before downloading.
-- **Messages**: private conversations with any user, even offline ones. Unread counts in the sidebar, a toast for new messages, and logs saved on this computer per account (`%APPDATA%\bawkseek\messages`).
-- **Rooms**: the public room list, sorted by size and filterable. Join several rooms at once, each in its own tab with members, tickers and unread counts. Set your own ticker, create private rooms, follow the public feed of every room, and rejoin automatically after a reconnect.
-- **Users**: look anyone up for their status, shares, speed, upload slots and queue. Keep buddies with live online, away and offline status. Ignore a user to hide their messages and room lines (the network gives no way to refuse their downloads). Set yourself away from settings, and give privileges to others when you have some.
-- **Discover**: list what you like and dislike, then get recommendations, globally popular items and people with similar taste. Open any item to see related items and who likes it; search for it or add it to your likes in one click.
-- **User menu**: right-click any username to browse their shares, send a message, see their info, add or remove them as a buddy, or ignore them.
-- **Transfers**: progress, speed and queue place per file, grouped by folder. Pause, resume, retry, cancel, open the folder.
-- **Sharing**: share any number of folders from the uploads page. They are scanned in the background after login, so a big library never delays it. Other users see each folder by its name: `D:\Music` appears as `Music`. A folder inside one you already share is refused. Everything in a shared folder is shared, hidden files included.
-- **Uploads**: who downloads from you, with progress, speed and queue place. Cancel a running upload, clear finished ones, and set how many people can download at once (upload slots, 1 to 50, default 10).
-- **Reconnects**: a dropped server connection reconnects by itself. Queued downloads resume when their peer is back.
-- **Notifications**: new messages, finished folders and new wishlist results show as toasts, and in the Windows notification center when bawkseek is in the background.
-- **Library**: your downloads and shared folders as an album grid with cover art, read from the tags or a cover image in the folder, and a player bar with seek, volume, shuffle and repeat. Space plays and pauses when no text box has focus. Finished downloads have a play button, and the library rescans itself a few seconds after downloads finish. Plays MP3, FLAC, M4A/AAC, ALAC, OGG Vorbis, WAV and AIFF. The scan runs the first time you open the page and remembers unchanged files.
-- **Settings**: download folder and speed limit, listening port with automatic UPnP port mapping, away status, privileges, password change.
-- **Appearance**: bawk dark, bawk light or follow Windows, plus 30 named themes from bawkterm (gruvbox, catppuccin, tokyo night, nord, dracula and more).
+1. Open the [releases page](https://github.com/juddisjudd/bawkseek/releases) and download the newest `bawkseek-…-windows-x64.zip`.
+2. Unzip it anywhere, for example into `Documents\bawkseek`.
+3. Double-click `bawkseek.exe`. There is nothing to install.
 
-Not in the Soulseek library yet, so not here either: an upload speed limit, refusing downloads from banned users, your own profile text and picture.
+You need Windows 10 or 11, 64-bit.
 
-## Build
+**"Windows protected your PC"?** bawkseek is not signed with a paid certificate yet, so Windows may warn you the first time. Click **More info**, then **Run anyway**.
+
+**A firewall prompt?** Click **Allow**. Other people need to reach you to download what you share and to send you search results.
+
+### 2. Log in
+
+Pick a name and a password. If nobody has that name yet, the server makes the account for you.
+
+Write the password down. Soulseek has no "forgot password", so a lost password means a lost name. Tick **remember me** to stay logged in. The password is kept in Windows Credential Manager.
+
+### 3. Share some music
+
+Open **uploads** and add the folders you want to share. Soulseek only works because people share, and many users won't let you download from them if you share nothing.
+
+Other people see each shared folder by its name only: `D:\Music` shows up as `Music`.
+
+### 4. Find and download
+
+Type an artist, album or song on the **search** page and press Enter. Results keep arriving for about half a minute, grouped by folder. Click the folder button to download a whole album, or open a folder and pick single files.
+
+Your downloads go to `Downloads\bawkseek`, one folder per album. You can change the folder under **settings**.
+
+### 5. Listen
+
+Open **library** to see your downloads and shared folders as albums with their covers. Click an album, then **play**. The player stays at the bottom while you browse, with shuffle, repeat, a seek bar and volume. Press **space** to play or pause.
+
+## Everything it does
+
+- **Search** with live results, sorted by speed, user, size or name. Each audio format has its own color: green for FLAC, yellow for MP3, and so on. Filter by format and quality, or show only users with a free slot.
+- **Downloads** of single files or whole folders, subfolders included. Pause, resume, retry, cancel, and play a finished file straight from the list.
+- **Wishlist:** press **keep searching** on a search and it runs again by itself every so often. You get a notification when something new turns up.
+- **Browse** anyone's shared folders as a tree, and download from there.
+- **Messages:** private chats, saved on your computer.
+- **Rooms:** join public chat rooms, make private ones, or follow every room at once.
+- **Users:** look anyone up, keep a buddy list with online status, and ignore people. An ignored user's messages are hidden, and they can't download from you or browse your files.
+- **Discover:** add artists and genres you like and get recommendations and people with similar taste.
+- **Library and player** for MP3, FLAC, M4A/AAC, ALAC, OGG Vorbis, WAV and AIFF. Opus, WMA, APE and WavPack don't play yet.
+- **Themes:** dark, light, follow Windows, or one of 30 named themes such as gruvbox, catppuccin, tokyo night, nord and dracula.
+- **Notifications** for new messages, finished albums and new wishlist results, also in the Windows notification center.
+- **Reconnects** by itself when the connection drops, and rejoins your rooms.
+
+## Search tips
+
+| Type | To get |
+| --- | --- |
+| `boards of canada geogaddi` | folders with all of those words |
+| `geogaddi -live` | leave out anything with "live" |
+| `@someuser flac` | search one user's files only |
+| `#"The Lobby" jazz` | search the people in one chat room |
+
+The filter box under the results narrows them down without searching again:
+
+| Type in the filter | To keep |
+| --- | --- |
+| `.flac` | FLAC files only (the format buttons do this too) |
+| `>=320` or `≥320` | files of 320 kbps or more |
+| `<256` | files under 256 kbps |
+| `-remix` | anything without "remix" |
+
+Lossless files count as higher than any MP3 bitrate.
+
+## When something doesn't work
+
+**Hardly anyone can download from me, or I get few results.** Other people must be able to connect to you on port 2234. bawkseek asks your router to open it automatically (UPnP). **settings → network** shows whether that worked. If it says no router answered, open TCP port 2234 to your PC in your router's settings ("port forwarding"), and allow bawkseek through the Windows firewall.
+
+**"Could not listen on port 2234".** Another program, often another Soulseek app, is using the port. Close it, or pick another listening port under **settings → network**. The new port takes effect the next time you log in.
+
+**"You logged in from somewhere else".** The same account was logged in on another computer or app, so the server closed this session. Close the other one, then press **log in here again** in the banner.
+
+**A song won't play.** Check that it's one of the formats listed above. Files that are still downloading or broken can't play either.
+
+**The library is missing new music.** It rescans by itself shortly after downloads finish. For music you added some other way, press **rescan** on the library page.
+
+## Where your things are
+
+| What | Where |
+| --- | --- |
+| Downloads | `Downloads\bawkseek` (change it under settings) |
+| Settings, shared folders, buddies | `%APPDATA%\bawkseek\config.json` |
+| Chat history and wishlist | `%APPDATA%\bawkseek\messages` and `\wishlist` |
+| Library cache and cover thumbnails | `%APPDATA%\bawkseek\library.json` and `\covers` |
+| Saved password | Windows Credential Manager, under `bawkseek` |
+
+To start fresh, close bawkseek and delete the `%APPDATA%\bawkseek` folder.
+
+## For developers
+
+bawkseek is written in Rust with [GPUI Kit](https://gpui-kit.com). It speaks Soulseek through its own protocol crate in [`crates/slsk`](crates/slsk).
+
+### Build from source
 
 You need:
 
@@ -37,37 +112,35 @@ You need:
 Then:
 
 ```sh
-cargo run              # debug build
-cargo build --release  # target/release/bawkseek.exe
-cargo test
+cargo run --release       # build and start
+cargo test --workspace    # run the tests
 ```
 
 The first build compiles GPUI and takes a few minutes.
 
-## Where things live
-
-| What | Where |
-| --- | --- |
-| Settings and shared folders | `%APPDATA%\bawkseek\config.json` |
-| Saved password | Windows Credential Manager, service `bawkseek` |
-| Downloads | `Downloads\bawkseek`, one folder per album (change it under settings) |
-
-## Network
-
-bawkseek listens on port 2234 for other users. When that port is busy, it picks a free one and tells you. Windows asks once whether to allow it through the firewall.
-
-bawkseek asks your router to open the port over UPnP (settings, network). If your router does not support UPnP, forward TCP port 2234 to this PC yourself. Without an open port, downloads from reachable users still work, but a user who cannot be reached either gets none of your search results and cannot download from you.
-
-To see the protocol traffic, set two environment variables before you start it:
+To see the network traffic, set two environment variables before you start it:
 
 ```powershell
 $env:LOG_LEVEL = "DEBUG"; $env:LOG_FILE = "$env:TEMP\bawkseek.log"; cargo run
 ```
 
+Set `BAWKSEEK_HOME` to a folder to keep a second copy's settings apart from your own.
+
+### Make a release
+
+The version lives in `Cargo.toml`. To publish a new one, run this from a clean `main`:
+
+```powershell
+.\scripts\release.ps1 -Version 0.2.0
+```
+
+It sets the version, commits, tags `v0.2.0` and pushes. The [release workflow](.github/workflows/release.yml) then tests, builds and publishes the zip and its SHA-256 checksum on the releases page, with notes that GitHub generates. A tag that doesn't match the version in `Cargo.toml` fails the build.
+
 ## Credits
 
-- [slsk](crates/slsk), bawkseek's own Soulseek protocol crate, built from the Nicotine+ protocol notes and [soulseek-rs](https://github.com/michel/soulseek-rs) (MIT).
+- [slsk](crates/slsk), bawkseek's own Soulseek protocol crate, built from the [Nicotine+ protocol notes](https://github.com/nicotine-plus/nicotine-plus/blob/master/doc/SLSKPROTOCOL.md) and [soulseek-rs](https://github.com/michel/soulseek-rs) (MIT).
 - [GPUI Kit](https://github.com/longbridge/gpui-kit) (Apache-2.0) and Zed's GPUI draw the interface.
+- [rodio](https://github.com/RustAudio/rodio) and [Symphonia](https://github.com/pdeljanov/Symphonia) play the music. [Lofty](https://github.com/Serial-ATA/lofty-rs) reads the tags.
 - [IBM Plex Mono](https://github.com/IBM/plex) (SIL Open Font License, `assets/fonts/OFL.txt`) is the typeface.
 - [Lucide](https://lucide.dev) (ISC) icons.
 
