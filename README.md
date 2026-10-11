@@ -3,8 +3,8 @@
 [![Latest release](https://img.shields.io/github/v/release/juddisjudd/bawkseek?style=flat-square&labelColor=13100f&color=f6d56b&label=release)](https://github.com/juddisjudd/bawkseek/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/juddisjudd/bawkseek/total?style=flat-square&labelColor=13100f&color=f6d56b)](https://github.com/juddisjudd/bawkseek/releases)
 [![Build](https://img.shields.io/github/actions/workflow/status/juddisjudd/bawkseek/release.yml?style=flat-square&labelColor=13100f&label=build)](https://github.com/juddisjudd/bawkseek/actions/workflows/release.yml)
-[![Windows 10 and 11](https://img.shields.io/badge/windows-10%20%7C%2011-f6d56b?style=flat-square&labelColor=13100f)](#windows)
-[![Linux: AppImage, deb, rpm and AUR](https://img.shields.io/badge/linux-appimage%20%7C%20deb%20%7C%20rpm%20%7C%20aur-f6d56b?style=flat-square&labelColor=13100f)](#linux)
+[![Windows](https://img.shields.io/badge/windows-f6d56b?style=flat-square)](#windows)
+[![Linux](https://img.shields.io/badge/linux-f6d56b?style=flat-square)](#linux)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-f6d56b?style=flat-square&labelColor=13100f)](LICENSE)
 
 bawkseek is a Windows and Linux app for [Soulseek](https://www.slsknet.org), the long-running network where people share music straight from their own computers. Search everyone's shared folders, download whole albums, chat, and play your music in the built-in player.
