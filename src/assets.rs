@@ -64,6 +64,10 @@ pub const FONTS: [&[u8]; 4] = [
     include_bytes!("../assets/fonts/IBMPlexMono-Bold.ttf"),
 ];
 
+/// GPUI takes IBM Plex Sans for the Linux system font and panics at startup when neither it nor a few common fonts are installed.
+#[cfg(target_os = "linux")]
+pub const SYSTEM_FONT: &[u8] = include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf");
+
 pub struct AppAssets;
 
 impl AssetSource for AppAssets {

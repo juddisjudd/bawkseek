@@ -12,7 +12,10 @@ pub const REPO_URL: &str = "https://github.com/juddisjudd/bawkseek";
 pub const RELEASES_URL: &str = "https://github.com/juddisjudd/bawkseek/releases";
 pub const ISSUES_URL: &str = "https://github.com/juddisjudd/bawkseek/issues";
 const LATEST_API: &str = "https://api.github.com/repos/juddisjudd/bawkseek/releases/latest";
-const ZIP_SUFFIX: &str = "-windows-x64.zip";
+#[cfg(windows)]
+const ASSET_SUFFIX: &str = "-windows-x64.zip";
+#[cfg(not(windows))]
+const ASSET_SUFFIX: &str = "-linux-x64.AppImage";
 
 #[derive(Deserialize)]
 struct ApiRelease {
@@ -34,7 +37,7 @@ pub struct Release {
     pub version: String,
     pub page: String,
     pub size: u64,
-    zip_url: String,
+    asset_url: String,
     sum_url: String,
 }
 
@@ -62,12 +65,12 @@ fn agent() -> ureq::Agent {
 }
 
 fn pick(release: ApiRelease) -> Result<Release, String> {
-    let zip = release
+    let download = release
         .assets
         .iter()
-        .find(|asset| asset.name.ends_with(ZIP_SUFFIX))
-        .ok_or("the newest release has no Windows download yet")?;
-    let sum_name = format!("{}.sha256", zip.name);
+        .find(|asset| asset.name.ends_with(ASSET_SUFFIX))
+        .ok_or("the newest release has no download for this system yet")?;
+    let sum_name = format!("{}.sha256", download.name);
     let sum = release
         .assets
         .iter()
@@ -76,8 +79,8 @@ fn pick(release: ApiRelease) -> Result<Release, String> {
     Ok(Release {
         version: release.tag_name.trim_start_matches('v').to_string(),
         page: release.html_url,
-        size: zip.size,
-        zip_url: zip.browser_download_url.clone(),
+        size: download.size,
+        asset_url: download.browser_download_url.clone(),
         sum_url: sum.browser_download_url.clone(),
     })
 }
@@ -98,7 +101,7 @@ pub fn check() -> Result<Option<Release>, String> {
     pick(release).map(Some)
 }
 
-/// The exe to replace, unless this copy was built from source, which updates through git instead.
+/// The file to replace, unless this copy updates another way: a source build through git, a package through its package manager.
 pub fn install_path() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|err| err.to_string())?;
     let from_source = exe
@@ -110,19 +113,33 @@ pub fn install_path() -> Result<PathBuf, String> {
     if from_source {
         return Err("this copy was built from source, so update it with git and cargo".into());
     }
+    replaceable(exe)
+}
+
+#[cfg(windows)]
+fn replaceable(exe: PathBuf) -> Result<PathBuf, String> {
     Ok(exe)
+}
+
+/// Only an AppImage replaces itself on Linux; its runtime names the file in `APPIMAGE`.
+#[cfg(not(windows))]
+fn replaceable(_exe: PathBuf) -> Result<PathBuf, String> {
+    std::env::var_os("APPIMAGE").map(PathBuf::from).ok_or_else(|| {
+        "this copy was installed as a package, so update it with your package manager or download the new package".into()
+    })
 }
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
+#[cfg(windows)]
 fn sibling(exe: &Path, tag: &str) -> PathBuf {
     let stem = exe.file_stem().unwrap_or_default().to_string_lossy();
     exe.with_file_name(format!("{stem}.{tag}.exe"))
 }
 
-/// Downloads and checks the release, then puts the new exe where the running one was. It runs after a restart.
+/// Downloads and checks the release, then puts the new version where the running one was. It runs after a restart.
 pub fn install(release: &Release, progress: impl Fn(u64)) -> Result<PathBuf, String> {
     let exe = install_path()?;
     let agent = agent();
@@ -139,13 +156,13 @@ pub fn install(release: &Release, progress: impl Fn(u64)) -> Result<PathBuf, Str
         .ok_or("the checksum file is empty")?
         .to_lowercase();
 
-    let zip_path = std::env::temp_dir().join(format!("bawkseek-{}.zip", release.version));
+    let download = std::env::temp_dir().join(format!("bawkseek-{}.update", release.version));
     let mut response = agent
-        .get(&release.zip_url)
+        .get(&release.asset_url)
         .call()
         .map_err(|err| format!("could not download the update: {err}"))?;
     let mut reader = response.body_mut().as_reader();
-    let mut file = File::create(&zip_path).map_err(|err| err.to_string())?;
+    let mut file = File::create(&download).map_err(|err| err.to_string())?;
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 64 * 1024];
     let mut done = 0u64;
@@ -164,17 +181,39 @@ pub fn install(release: &Release, progress: impl Fn(u64)) -> Result<PathBuf, Str
     }
     drop(file);
     if hex(&hasher.finalize()) != expected {
-        let _ = fs::remove_file(&zip_path);
+        let _ = fs::remove_file(&download);
         return Err("the download does not match its checksum, so it was not installed".into());
     }
 
-    let fresh = sibling(&exe, "new");
-    let result = extract_exe(&zip_path, &fresh).and_then(|()| swap(&exe, &fresh));
-    let _ = fs::remove_file(&zip_path);
-    let _ = fs::remove_file(&fresh);
+    let result = place(&download, &exe);
+    let _ = fs::remove_file(&download);
     result.map(|()| exe)
 }
 
+#[cfg(windows)]
+fn place(download: &Path, exe: &Path) -> Result<(), String> {
+    let fresh = sibling(exe, "new");
+    let result = extract_exe(download, &fresh).and_then(|()| swap(exe, &fresh));
+    let _ = fs::remove_file(&fresh);
+    result
+}
+
+/// Linux lets a running file be renamed over, so the new AppImage lands in one step.
+#[cfg(not(windows))]
+fn place(download: &Path, appimage: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let fresh = appimage.with_extension("new");
+    let result = fs::copy(download, &fresh)
+        .and_then(|_| fs::set_permissions(&fresh, fs::Permissions::from_mode(0o755)))
+        .and_then(|()| fs::rename(&fresh, appimage))
+        .map_err(|err| {
+            format!("cannot write next to the AppImage ({err}). download the new version by hand.")
+        });
+    let _ = fs::remove_file(&fresh);
+    result
+}
+
+#[cfg(windows)]
 fn extract_exe(zip_path: &Path, out: &Path) -> Result<(), String> {
     let file = File::open(zip_path).map_err(|err| err.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|err| err.to_string())?;
@@ -191,6 +230,7 @@ fn extract_exe(zip_path: &Path, out: &Path) -> Result<(), String> {
 }
 
 /// Windows lets a running exe be renamed but not overwritten, so the old one steps aside first.
+#[cfg(windows)]
 fn swap(exe: &Path, fresh: &Path) -> Result<(), String> {
     let old = sibling(exe, "old");
     let _ = fs::remove_file(&old);
@@ -202,7 +242,7 @@ fn swap(exe: &Path, fresh: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Starts the freshly installed exe; the caller quits this one.
+/// Starts the freshly installed version; the caller quits this one.
 pub fn relaunch(exe: &Path) -> Result<(), String> {
     Command::new(exe)
         .spawn()
@@ -211,6 +251,7 @@ pub fn relaunch(exe: &Path) -> Result<(), String> {
 }
 
 /// Removes the exe an earlier update set aside, waiting for that copy to finish quitting.
+#[cfg(windows)]
 pub fn clean_up() {
     let Ok(exe) = std::env::current_exe() else {
         return;
@@ -253,7 +294,8 @@ mod tests {
     }
 
     #[test]
-    fn picks_the_windows_zip_and_its_checksum() {
+    fn picks_this_systems_download_and_its_checksum() {
+        let ours = format!("bawkseek-v0.2.0{ASSET_SUFFIX}");
         let release = ApiRelease {
             tag_name: "v0.2.0".into(),
             html_url: "https://example.com/v0.2.0".into(),
@@ -261,16 +303,19 @@ mod tests {
                 asset("notes.txt"),
                 asset("bawkseek-v0.2.0-windows-x64.zip.sha256"),
                 asset("bawkseek-v0.2.0-windows-x64.zip"),
+                asset("bawkseek-v0.2.0-linux-x64.AppImage.sha256"),
+                asset("bawkseek-v0.2.0-linux-x64.AppImage"),
+                asset("bawkseek-v0.2.0-linux-x64.tar.gz"),
             ],
         };
         let picked = pick(release).unwrap();
         assert_eq!(picked.version, "0.2.0");
-        assert!(picked.zip_url.ends_with(".zip"));
-        assert!(picked.sum_url.ends_with(".zip.sha256"));
+        assert!(picked.asset_url.ends_with(&ours));
+        assert!(picked.sum_url.ends_with(&format!("{ours}.sha256")));
         let bare = ApiRelease {
             tag_name: "v0.2.0".into(),
             html_url: String::new(),
-            assets: vec![asset("bawkseek-v0.2.0-windows-x64.zip")],
+            assets: vec![asset(&ours)],
         };
         assert!(pick(bare).is_err());
     }
@@ -281,6 +326,25 @@ mod tests {
         assert_eq!(check(), Ok(None));
     }
 
+    #[cfg(not(windows))]
+    #[test]
+    fn places_a_runnable_appimage_over_the_old_one() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("bawkseek-place-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let appimage = dir.join("bawkseek-v0.1.0-linux-x64.AppImage");
+        let download = dir.join("bawkseek-0.2.0.update");
+        fs::write(&appimage, b"old").unwrap();
+        fs::write(&download, b"new").unwrap();
+        place(&download, &appimage).unwrap();
+        assert_eq!(fs::read(&appimage).unwrap(), b"new");
+        let mode = fs::metadata(&appimage).unwrap().permissions().mode();
+        assert_eq!(mode & 0o111, 0o111);
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 2);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(windows)]
     #[test]
     fn swaps_files_and_names_siblings() {
         let dir = std::env::temp_dir().join(format!("bawkseek-swap-{}", std::process::id()));

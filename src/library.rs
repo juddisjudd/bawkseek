@@ -603,9 +603,14 @@ pub fn arrange(
 mod tests {
     use super::*;
 
+    /// Paths here are written the Windows way; other systems get their own separator.
+    fn native(path: &str) -> PathBuf {
+        PathBuf::from(path.replace('\\', std::path::MAIN_SEPARATOR_STR))
+    }
+
     fn track(path: &str, album: &str, artist: &str, number: Option<u32>) -> Track {
         Track {
-            path: PathBuf::from(path),
+            path: native(path),
             title: path.into(),
             artist: artist.into(),
             album: album.into(),
@@ -644,7 +649,7 @@ mod tests {
             tracks: Vec::new(),
             cover: None,
             duration: 0,
-            folder: PathBuf::from(folder),
+            folder: native(folder),
             added,
         }
     }
@@ -681,7 +686,7 @@ mod tests {
             .collect();
         assert_eq!(
             paths,
-            [r"share\01.flac", r"share\02.flac", r"share\03.flac"].map(PathBuf::from)
+            [r"share\01.flac", r"share\02.flac", r"share\03.flac"].map(native)
         );
         assert_eq!(albums[0].folder, PathBuf::from("share"));
     }
@@ -739,10 +744,7 @@ mod tests {
 
     #[test]
     fn groups_by_folder_named_from_the_library_folder() {
-        let roots = vec![
-            PathBuf::from(r"D:\Music"),
-            PathBuf::from(r"E:\Downloads\bawkseek"),
-        ];
+        let roots = vec![native(r"D:\Music"), native(r"E:\Downloads\bawkseek")];
         let albums = vec![
             album("x", "a", r"D:\Music\Rock\Band - Record", 1),
             album(
@@ -755,21 +757,26 @@ mod tests {
             album("loose", "d", r"D:\Music", 1),
         ];
         let sections = arrange(&albums, &[0, 1, 2, 3], Sort::Folder, &roots, Local::now());
-        assert_eq!(headings(&sections), ["bawkseek", "Music", r"Music\Rock"]);
+        let rock = native(r"Music\Rock");
+        assert_eq!(
+            headings(&sections),
+            ["bawkseek", "Music", rock.to_str().unwrap()]
+        );
         assert_eq!(sections[2].albums, [2, 0]);
     }
 
     #[test]
     fn skips_roots_inside_other_roots() {
-        let roots = vec![
-            PathBuf::from(r"D:\Music"),
-            PathBuf::from(r"D:\Music\Rock"),
-            PathBuf::from(r"E:\Downloads"),
-            PathBuf::from(r"E:\Downloads"),
-        ];
+        let roots = [
+            r"D:\Music",
+            r"D:\Music\Rock",
+            r"E:\Downloads",
+            r"E:\Downloads",
+        ]
+        .map(native);
         assert_eq!(
             outermost(&roots),
-            vec![PathBuf::from(r"D:\Music"), PathBuf::from(r"E:\Downloads")]
+            vec![native(r"D:\Music"), native(r"E:\Downloads")]
         );
     }
 

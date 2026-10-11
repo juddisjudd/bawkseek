@@ -17,8 +17,11 @@ use gpui_kit::*;
 
 fn main() {
     logging::init();
+    #[cfg(windows)]
     updater::clean_up();
     application().with_assets(assets::AppAssets).run(|cx| {
+        #[cfg(target_os = "linux")]
+        theme::add_system_font(cx);
         init(cx);
         cx.set_app_identity("com.bawkseek.app", "bawkseek");
         theme::init(cx);
@@ -27,6 +30,7 @@ fn main() {
         let options = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             window_min_size: Some(size(px(860.), px(560.))),
+            app_id: Some("bawkseek".into()),
             ..TitleBar::window_options()
         };
         open_window(options, cx, |window, cx| {

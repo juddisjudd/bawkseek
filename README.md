@@ -6,7 +6,7 @@
 [![Windows 10 and 11](https://img.shields.io/badge/windows-10%20%7C%2011-f6d56b?style=flat-square&labelColor=13100f)](#1-download)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-f6d56b?style=flat-square&labelColor=13100f)](LICENSE)
 
-bawkseek is a Windows app for [Soulseek](https://www.slsknet.org), the long-running network where people share music straight from their own computers. Search everyone's shared folders, download whole albums, chat, and play your music in the built-in player.
+bawkseek is a Windows and Linux app for [Soulseek](https://www.slsknet.org), the long-running network where people share music straight from their own computers. Search everyone's shared folders, download whole albums, chat, and play your music in the built-in player.
 
 
 https://github.com/user-attachments/assets/67453641-9514-4e91-af93-beb7d8943074
@@ -18,6 +18,8 @@ https://github.com/user-attachments/assets/67453641-9514-4e91-af93-beb7d8943074
 
 ### 1. Download
 
+#### Windows
+
 1. Open the [releases page](https://github.com/juddisjudd/bawkseek/releases) and download the newest `bawkseek-…-windows-x64.zip`.
 2. Unzip it anywhere, for example into `Documents\bawkseek`.
 3. Double-click `bawkseek.exe`. There is nothing to install.
@@ -28,17 +30,30 @@ You need Windows 10 or 11, 64-bit.
 
 **A firewall prompt?** Click **Allow**. Other people need to reach you to download what you share and to send you search results.
 
+#### Linux
+
+Pick the download that fits your system from the [releases page](https://github.com/juddisjudd/bawkseek/releases):
+
+| System | Download | Install |
+| --- | --- | --- |
+| Any | `bawkseek-…-linux-x64.AppImage` | `chmod +x bawkseek-*.AppImage`, then run it |
+| Debian, Ubuntu, Mint | `bawkseek_…_amd64.deb` | `sudo apt install ./bawkseek_*.deb` |
+| Fedora | `bawkseek-….x86_64.rpm` | `sudo dnf install ./bawkseek-*.rpm` |
+| Arch | [bawkseek-bin](https://aur.archlinux.org/packages/bawkseek-bin) on the AUR | `yay -S bawkseek-bin` |
+
+You need a 64-bit system from 2022 or later (glibc 2.35), such as Ubuntu 22.04 or Debian 12.
+
 ### 2. Log in
 
 Pick a name and a password. If nobody has that name yet, the server makes the account for you.
 
-Write the password down. Soulseek has no "forgot password", so a lost password means a lost name. Tick **remember me** to stay logged in. The password is kept in Windows Credential Manager.
+Write the password down. Soulseek has no "forgot password", so a lost password means a lost name. Tick **remember me** to stay logged in. The password is kept in Windows Credential Manager, or in your keyring on Linux.
 
 ### 3. Share some music
 
 Open **uploads** and add the folders you want to share. Soulseek only works because people share, and many users won't let you download from them if you share nothing.
 
-Other people see each shared folder by its name only: `D:\Music` shows up as `Music`.
+Other people see each shared folder by its name only: `D:\Music` or `/home/you/Music` shows up as `Music`.
 
 ### 4. Find and download
 
@@ -54,6 +69,8 @@ Open **library** to see your downloads and shared folders as albums with their c
 
 bawkseek checks for a new version each time it starts. When one is out, you get a notification and a dot on **settings → about**. Press **update**, then **restart now**. Your settings and downloads stay as they are.
 
+On Linux the AppImage updates itself this way. A `.deb` or `.rpm` does not: download the new package and install it over the old one. The AUR package updates with the rest of your system.
+
 ## Everything it does
 
 - **Search** with live results, sorted by speed, user, size or name. Each audio format has its own color: green for FLAC, yellow for MP3, and so on. Filter by format and quality, or show only users with a free slot.
@@ -65,8 +82,8 @@ bawkseek checks for a new version each time it starts. When one is out, you get 
 - **Users:** look anyone up, keep a buddy list with online status, and ignore people. An ignored user's messages are hidden, and they can't download from you or browse your files.
 - **Discover:** add artists and genres you like and get recommendations and people with similar taste.
 - **Library and player** for MP3, FLAC, M4A/AAC, ALAC, OGG Vorbis, WAV and AIFF. Opus, WMA, APE and WavPack don't play yet. An album found in two folders, such as a download you also share, shows up once.
-- **Themes:** dark, light, follow Windows, or one of 30 named themes such as gruvbox, catppuccin, tokyo night, nord and dracula.
-- **Notifications** for new messages, finished albums and new wishlist results, also in the Windows notification center.
+- **Themes:** dark, light, follow your system, or one of 30 named themes such as gruvbox, catppuccin, tokyo night, nord and dracula.
+- **Notifications** for new messages, finished albums and new wishlist results, also in your system's notification center.
 - **Reconnects** by itself when the connection drops, and rejoins your rooms.
 - **Updates** itself from the releases page. Each download is checked against its SHA-256 checksum before it is installed.
 
@@ -80,7 +97,7 @@ bawkseek checks for a new version each time it starts. When one is out, you get 
 
 ![An album page with its track list and the player bar](docs/screenshots/album.png)
 
-**Themes:** pick from 30, or let bawkseek follow Windows between dark and light.
+**Themes:** pick from 30, or let bawkseek follow your system between dark and light.
 
 ![The theme picker in settings, with catppuccin mocha applied](docs/screenshots/themes.png)
 
@@ -106,7 +123,7 @@ Lossless files count as higher than any MP3 bitrate.
 
 ## When something doesn't work
 
-**Hardly anyone can download from me, or I get few results.** Other people must be able to connect to you on port 2234. bawkseek asks your router to open it automatically (UPnP). **settings → network** shows whether that worked. If it says no router answered, open TCP port 2234 to your PC in your router's settings ("port forwarding"), and allow bawkseek through the Windows firewall.
+**Hardly anyone can download from me, or I get few results.** Other people must be able to connect to you on port 2234. bawkseek asks your router to open it automatically (UPnP). **settings → network** shows whether that worked. If it says no router answered, open TCP port 2234 to your PC in your router's settings ("port forwarding"), and allow bawkseek through your firewall.
 
 **"Could not listen on port 2234".** Another program, often another Soulseek app, is using the port. Close it, or pick another listening port under **settings → network**. The new port takes effect the next time you log in.
 
@@ -116,7 +133,11 @@ Lossless files count as higher than any MP3 bitrate.
 
 **The library is missing new music.** It rescans by itself shortly after downloads finish. For music you added some other way, press **rescan** on the library page.
 
-**An update fails with "cannot write next to bawkseek.exe".** bawkseek is in a folder it can't change, such as `Program Files`. Move the bawkseek folder somewhere of your own, such as `Documents`, or download the new zip by hand.
+**An update fails with "cannot write next to bawkseek.exe".** bawkseek is in a folder it can't change, such as `Program Files`. Move the bawkseek folder somewhere of your own, such as `Documents`, or download the new zip by hand. The same goes for an AppImage in a folder you can't write to.
+
+**The window stays blank on Linux.** bawkseek draws with Vulkan, and with OpenGL when there is no Vulkan. A Vulkan driver without a real graphics card behind it, as in some virtual machines, can leave the window empty. Start bawkseek with OpenGL instead: `VK_ICD_FILENAMES=/dev/null bawkseek`.
+
+**"Remember me" forgets the password on Linux.** bawkseek keeps it in your desktop's keyring. If your desktop has none, install `gnome-keyring`.
 
 ## Where your things are
 
@@ -130,17 +151,25 @@ Lossless files count as higher than any MP3 bitrate.
 
 To start fresh, close bawkseek and delete the `%APPDATA%\bawkseek` folder.
 
+On Linux the same files are in `~/.config/bawkseek`, downloads go to `~/Downloads/bawkseek`, and the password is in your keyring under `bawkseek`.
+
 ## For developers
 
 bawkseek is written in Rust with [GPUI Kit](https://gpui-kit.com). It speaks Soulseek through its own protocol crate in [`crates/slsk`](crates/slsk).
 
 ### Build from source
 
-You need:
+On Windows you need:
 
 1. Rust 1.92 or later, with the MSVC toolchain.
 2. Visual Studio 2022 Build Tools with the **Desktop development with C++** workload.
 3. CMake on `PATH`.
+
+On Linux you need Rust 1.92 or later, a C compiler, and the development files for ALSA, fontconfig, Wayland, X11 and xkbcommon. On Debian and Ubuntu:
+
+```sh
+sudo apt install build-essential pkg-config libasound2-dev libfontconfig-dev libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev
+```
 
 Then:
 
@@ -167,14 +196,16 @@ The version lives in `Cargo.toml`. To publish a new one, run this from a clean `
 .\scripts\release.ps1 -Version 0.2.0
 ```
 
-It sets the version, commits, tags `v0.2.0` and pushes. The [release workflow](.github/workflows/release.yml) then tests, builds and publishes the zip and its SHA-256 checksum on the releases page, with notes that GitHub generates. A tag that doesn't match the version in `Cargo.toml` fails the build.
+It sets the version, commits, tags `v0.2.0` and pushes. The [release workflow](.github/workflows/release.yml) then tests and builds on Windows and Linux. It publishes the Windows zip, the AppImage, the `.deb`, the `.rpm` and a Linux tar.gz on the releases page, each with its SHA-256 checksum, with notes that GitHub generates. A tag that doesn't match the version in `Cargo.toml` fails the build.
+
+The Linux packages come from [`packaging/linux/package.sh`](packaging/linux/package.sh). The last job updates the [AUR package](packaging/aur/README.md) once its SSH key is set as a repository secret.
 
 ## Credits
 
 - [slsk](crates/slsk), bawkseek's own Soulseek protocol crate, built from the [Nicotine+ protocol notes](https://github.com/nicotine-plus/nicotine-plus/blob/master/doc/SLSKPROTOCOL.md) and [soulseek-rs](https://github.com/michel/soulseek-rs) (MIT).
 - [GPUI Kit](https://github.com/longbridge/gpui-kit) (Apache-2.0) and Zed's GPUI draw the interface.
 - [rodio](https://github.com/RustAudio/rodio) and [Symphonia](https://github.com/pdeljanov/Symphonia) play the music. [Lofty](https://github.com/Serial-ATA/lofty-rs) reads the tags.
-- [IBM Plex Mono](https://github.com/IBM/plex) (SIL Open Font License, `assets/fonts/OFL.txt`) is the typeface.
+- [IBM Plex Mono](https://github.com/IBM/plex) (SIL Open Font License, `assets/fonts/OFL.txt`) is the typeface. IBM Plex Sans, under the same license, is the fallback font on Linux.
 - [Lucide](https://lucide.dev) (ISC) icons.
 
 Please share back what you download.

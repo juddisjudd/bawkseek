@@ -565,7 +565,12 @@ impl SettingsView {
 
     fn render_appearance(&self, p: &Palette, cx: &mut Context<Self>) -> Div {
         let theme_hint: SharedString = if self.theme == DEFAULT_THEME {
-            "system follows windows".into()
+            if cfg!(windows) {
+                "system follows windows"
+            } else {
+                "system follows your desktop"
+            }
+            .into()
         } else {
             let label = theme::looks(cx)
                 .iter()

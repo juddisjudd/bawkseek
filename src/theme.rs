@@ -60,6 +60,14 @@ struct Card {
     swatches: [String; 6],
 }
 
+/// Runs before the component library starts, which is where the system font is first looked up.
+#[cfg(target_os = "linux")]
+pub fn add_system_font(cx: &mut App) {
+    cx.text_system()
+        .add_fonts(vec![Cow::Borrowed(crate::assets::SYSTEM_FONT)])
+        .expect("bundled fonts are valid");
+}
+
 pub fn init(cx: &mut App) {
     cx.text_system()
         .add_fonts(FONTS.iter().map(|bytes| Cow::Borrowed(*bytes)).collect())

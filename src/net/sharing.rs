@@ -141,12 +141,17 @@ mod tests {
         );
     }
 
+    /// Paths here are written the Windows way; other systems get their own separator.
+    fn native(path: &str) -> PathBuf {
+        PathBuf::from(path.replace('\\', std::path::MAIN_SEPARATOR_STR))
+    }
+
     #[test]
     fn detects_nested_shares() {
-        let dirs = vec![PathBuf::from(r"D:\Music")];
-        assert!(overlaps(&dirs, Path::new(r"D:\Music\Rock")));
-        assert!(overlaps(&dirs, Path::new(r"D:\")));
-        assert!(!overlaps(&dirs, Path::new(r"D:\Musicals")));
-        assert!(!overlaps(&dirs, Path::new(r"E:\Music")));
+        let dirs = vec![native(r"D:\Music")];
+        assert!(overlaps(&dirs, &native(r"D:\Music\Rock")));
+        assert!(overlaps(&dirs, &native(r"D:\")));
+        assert!(!overlaps(&dirs, &native(r"D:\Musicals")));
+        assert!(!overlaps(&dirs, &native(r"E:\Music")));
     }
 }

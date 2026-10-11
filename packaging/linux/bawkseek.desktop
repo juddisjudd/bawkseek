@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=bawkseek
+Comment=Soulseek client and audio player
+Exec=bawkseek
+Icon=bawkseek
+Terminal=false
+Categories=Network;FileTransfer;P2P;
+Keywords=soulseek;slsk;p2p;music;player;
+StartupWMClass=bawkseek
