@@ -3,7 +3,8 @@
 [![Latest release](https://img.shields.io/github/v/release/juddisjudd/bawkseek?style=flat-square&labelColor=13100f&color=f6d56b&label=release)](https://github.com/juddisjudd/bawkseek/releases/latest)
 [![Downloads](https://img.shields.io/github/downloads/juddisjudd/bawkseek/total?style=flat-square&labelColor=13100f&color=f6d56b)](https://github.com/juddisjudd/bawkseek/releases)
 [![Build](https://img.shields.io/github/actions/workflow/status/juddisjudd/bawkseek/release.yml?style=flat-square&labelColor=13100f&label=build)](https://github.com/juddisjudd/bawkseek/actions/workflows/release.yml)
-[![Windows 10 and 11](https://img.shields.io/badge/windows-10%20%7C%2011-f6d56b?style=flat-square&labelColor=13100f)](#1-download)
+[![Windows 10 and 11](https://img.shields.io/badge/windows-10%20%7C%2011-f6d56b?style=flat-square&labelColor=13100f)](#windows)
+[![Linux: AppImage, deb, rpm and AUR](https://img.shields.io/badge/linux-appimage%20%7C%20deb%20%7C%20rpm%20%7C%20aur-f6d56b?style=flat-square&labelColor=13100f)](#linux)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-f6d56b?style=flat-square&labelColor=13100f)](LICENSE)
 
 bawkseek is a Windows and Linux app for [Soulseek](https://www.slsknet.org), the long-running network where people share music straight from their own computers. Search everyone's shared folders, download whole albums, chat, and play your music in the built-in player.
@@ -59,7 +60,7 @@ Other people see each shared folder by its name only: `D:\Music` or `/home/you/M
 
 Type an artist, album or song on the **search** page and press Enter. Results keep arriving for about half a minute, grouped by folder. Click the folder button to download a whole album, or open a folder and pick single files.
 
-Your downloads go to `Downloads\bawkseek`, one folder per album. You can change the folder under **settings**.
+Your downloads go to a `bawkseek` folder inside your Downloads folder, one folder per album. You can change the folder under **settings**.
 
 ### 5. Listen
 
@@ -123,7 +124,7 @@ Lossless files count as higher than any MP3 bitrate.
 
 ## When something doesn't work
 
-**Hardly anyone can download from me, or I get few results.** Other people must be able to connect to you on port 2234. bawkseek asks your router to open it automatically (UPnP). **settings → network** shows whether that worked. If it says no router answered, open TCP port 2234 to your PC in your router's settings ("port forwarding"), and allow bawkseek through your firewall.
+**Hardly anyone can download from me, or I get few results.** Other people must be able to connect to you on port 2234. bawkseek asks your router to open it automatically (UPnP). **settings → network** shows whether that worked. If it says no router answered, open TCP port 2234 to your PC in your router's settings ("port forwarding"), and allow bawkseek through your firewall. On Linux with `ufw` turned on, that is `sudo ufw allow 2234/tcp`.
 
 **"Could not listen on port 2234".** Another program, often another Soulseek app, is using the port. Close it, or pick another listening port under **settings → network**. The new port takes effect the next time you log in.
 
@@ -133,7 +134,7 @@ Lossless files count as higher than any MP3 bitrate.
 
 **The library is missing new music.** It rescans by itself shortly after downloads finish. For music you added some other way, press **rescan** on the library page.
 
-**An update fails with "cannot write next to bawkseek.exe".** bawkseek is in a folder it can't change, such as `Program Files`. Move the bawkseek folder somewhere of your own, such as `Documents`, or download the new zip by hand. The same goes for an AppImage in a folder you can't write to.
+**An update fails with "cannot write next to bawkseek.exe" or "cannot write next to the AppImage".** bawkseek is in a folder it can't change, such as `Program Files` on Windows or `/opt` on Linux. Move it somewhere of your own, such as `Documents` or your home folder, or download the new version by hand.
 
 **The window stays blank on Linux.** bawkseek draws with Vulkan, and with OpenGL when there is no Vulkan. A Vulkan driver without a real graphics card behind it, as in some virtual machines, can leave the window empty. Start bawkseek with OpenGL instead: `VK_ICD_FILENAMES=/dev/null bawkseek`.
 
@@ -141,17 +142,15 @@ Lossless files count as higher than any MP3 bitrate.
 
 ## Where your things are
 
-| What | Where |
-| --- | --- |
-| Downloads | `Downloads\bawkseek` (change it under settings) |
-| Settings, shared folders, buddies | `%APPDATA%\bawkseek\config.json` |
-| Chat history and wishlist | `%APPDATA%\bawkseek\messages` and `\wishlist` |
-| Library cache and cover thumbnails | `%APPDATA%\bawkseek\library.json` and `\covers` |
-| Saved password | Windows Credential Manager, under `bawkseek` |
+| What | Windows | Linux |
+| --- | --- | --- |
+| Downloads (change it under settings) | `Downloads\bawkseek` | `~/Downloads/bawkseek` |
+| Settings, shared folders, buddies | `%APPDATA%\bawkseek\config.json` | `~/.config/bawkseek/config.json` |
+| Chat history and wishlist | `%APPDATA%\bawkseek\messages` and `\wishlist` | `~/.config/bawkseek/messages` and `/wishlist` |
+| Library cache and cover thumbnails | `%APPDATA%\bawkseek\library.json` and `\covers` | `~/.config/bawkseek/library.json` and `/covers` |
+| Saved password | Windows Credential Manager, under `bawkseek` | your keyring, under `bawkseek` |
 
-To start fresh, close bawkseek and delete the `%APPDATA%\bawkseek` folder.
-
-On Linux the same files are in `~/.config/bawkseek`, downloads go to `~/Downloads/bawkseek`, and the password is in your keyring under `bawkseek`.
+To start fresh, close bawkseek and delete the `%APPDATA%\bawkseek` folder on Windows, or `~/.config/bawkseek` on Linux.
 
 ## For developers
 
@@ -180,10 +179,16 @@ cargo test --workspace    # run the tests
 
 The first build compiles GPUI and takes a few minutes.
 
-To see the network traffic, set two environment variables before you start it:
+To see the network traffic, set two environment variables before you start it. In PowerShell:
 
 ```powershell
 $env:LOG_LEVEL = "DEBUG"; $env:LOG_FILE = "$env:TEMP\bawkseek.log"; cargo run
+```
+
+In a Linux shell:
+
+```sh
+LOG_LEVEL=DEBUG LOG_FILE=/tmp/bawkseek.log cargo run
 ```
 
 Set `BAWKSEEK_HOME` to a folder to keep a second copy's settings apart from your own.
