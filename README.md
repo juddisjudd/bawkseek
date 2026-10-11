@@ -9,9 +9,7 @@
 
 bawkseek is a Windows and Linux app for [Soulseek](https://www.slsknet.org), the long-running network where people share music straight from their own computers. Search everyone's shared folders, download whole albums, chat, and play your music in the built-in player.
 
-
-https://github.com/user-attachments/assets/67453641-9514-4e91-af93-beb7d8943074
-
+https://github.com/user-attachments/assets/2fdd13f4-548b-4cce-bc27-83792b52ccda
 
 ![The library, with album covers and the player bar](docs/screenshots/library.png)
 
